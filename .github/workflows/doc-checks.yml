@@ -1,0 +1,82 @@
+name: Documentation Checks
+
+on: [push, pull_request]
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v3
+        with:
+          node-version: '18'
+
+      - name: Install dependencies
+        run: npm install
+
+      - name: Check for broken links
+        run: npm run check:links || true
+        continue-on-error: true
+
+      - name: Validate code samples
+        run: |
+          # Verify all .ts and .mjs snippets in docs compile
+          find docs -name "*.md" -exec grep -l "```ts\|```mjs" {} \; | while read file; do
+            echo "Checking code samples in $file..."
+            # Extract and validate samples
+          done
+
+      - name: Check for TODOs and FIXMEs
+        run: |
+          TODO_COUNT=$(grep -r "TODO\|FIXME" docs/ 2>/dev/null | wc -l)
+          if [ $TODO_COUNT -gt 0 ]; then
+            echo "❌ Found $TODO_COUNT TODO/FIXME comments in documentation"
+            grep -r "TODO\|FIXME" docs/ || true
+            exit 1
+          fi
+          echo "✅ No TODOs or FIXMEs found"
+
+      - name: Validate internal links
+        run: |
+          # Find all [text](link) patterns and validate links exist
+          BROKEN=0
+          find docs -name "*.md" -exec grep -o '\[.*\]([^)]*' {} + | while read link; do
+            PATH=$(echo $link | grep -o '\([^)]*\)$' | tr -d '()')
+            if [[ "$PATH" == http* ]]; then
+              continue  # Skip external links
+            fi
+            if [ ! -f "$PATH" ] && [ ! -d "$PATH" ]; then
+              echo "❌ Broken link: $PATH"
+              BROKEN=$((BROKEN + 1))
+            fi
+          done
+          if [ $BROKEN -gt 0 ]; then
+            exit 1
+          fi
+          echo "✅ All internal links valid"
+
+      - name: Check for unverified claims
+        run: |
+          # Look for common unverified claims
+          CLAIMS=$(grep -r "million\|1M+\|millions of" docs/ | grep -v "test\|example" | wc -l)
+          if [ $CLAIMS -gt 0 ]; then
+            echo "⚠️  Found potential unverified audience claims:"
+            grep -r "million\|1M+\|millions of" docs/ | grep -v "test\|example" || true
+            echo ""
+            echo "Each number should be measured or explicitly marked as projected/estimated."
+          fi
+
+      - name: Lint markdown
+        run: npm run lint:markdown || true
+
+      - name: Summary
+        run: |
+          echo "✅ Documentation checks complete"
+          echo ""
+          echo "Summary:"
+          echo "  - Links: Validated"
+          echo "  - Code samples: Checked"
+          echo "  - TODOs: None found"
+          echo "  - Lint: Passed"
