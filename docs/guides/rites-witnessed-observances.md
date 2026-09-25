@@ -1,562 +1,273 @@
-# Rites: Witnessed Observances and Sealed Standing
+# Rites: Witnessed Observances (`ritual/1`)
 
-Learn Rites, the `ritual/1` format for recording and verifying witnessed observances that affect standing and reputation without revealing personal data.
+Learn Rites, the `ritual/1` format — the estate's "present tense." It records the
+recurring, witnessed, consequence-bearing act: a practice happening now, on a
+rhythm a stranger can check.
+
+> **Canon first.** The authoritative source is
+> [`Rites-Network/SPEC.md`](https://github.com/FlashyLabs/Rites-Network/blob/main/SPEC.md).
+> Where this guide and the spec disagree, the spec wins.
+
+## Three Tenses
+
+The estate keeps three tenses, shaped differently on purpose:
+
+| Tense | Format | What it holds |
+|-------|--------|---------------|
+| **Future** | `backlog/1` | What is intended (decays unless restated) |
+| **Present** | `ritual/1` | What is practised now (a rhythm that holds) |
+| **Past** | `shipped/1` | What was done (sealed, never decays) |
+
+An intention decays unless somebody restates it. A fact about the past is sealed
+and never decays. Neither fits a *practice*: a practice is a rhythm, and its
+evidence is that the rhythm holds. `ritual/1` gives that practice a first-class
+record.
 
 ## What Problem Does It Solve?
 
-You need to:
-- Track standing/reputation transparently
-- Prove that an observation happened and was witnessed
-- Keep the observance immutable forever (content-addressed)
-- Never expose the subject's identity in the public record
-- Allow different networks to weight the same events differently
+A repository whose emitters refresh its fragments every day is *practising*
+something — but the estate could only see that practice by its side effects.
+`ritual/1` makes the practice legible:
+- **Liturgies** declare a recurring rite on a shared cadence
+- **Observances** record each performance, with evidence a stranger can open
+- A **state ladder** (`performed → witnessed → consecrated`) is climbed by
+  transition, never by assertion
+- The log is **append-only** — a correction is a new observance, never an edit
 
-Rites solves this with:
-- **Ritual records** — what happened (kind, subject, object, value, outcome)
-- **Sealing** — a witness cryptographically affirms the observation
-- **Non-identifying projection** — public log shows only digest + kind + timestamp
-- **Content-addressed proof** — sha256 digest proves the ritual's content forever
-- **Portable verification** — verify anywhere; no secrets required; browser-compatible
+## The Four Refusals That Outrank Everything
 
-## Key Concepts
+**1. Agents observe; humans consecrate.** A `performer` is an `agent/` id acting
+`for` an `org/` or `person/` who answers. A `consecration.by` is a `person/` id
+and nothing else. There is no code path by which an agent approves an observance
+into consequence.
 
-### Ritual (Observance Record)
+**2. Standing comes from what others assert, never from unilateral activity.**
+Standing accrues from *consecrated observances witnessed by others* — never from
+a subject's own activity. (This is inherited Magician doctrine.)
 
-A structured record of something witnessed. A ritual captures:
-- What kind of thing happened (completion, achievement, contribution, etc.)
-- Who/what it happened to (subject)
-- What/where it happened (object)
-- Who witnessed it (witness)
-- What was claimed as the value (claimedValue)
-- What was the claimed outcome (claimedOutcome)
+**3. Reward is a different format.** Accrual against consecrated observances
+belongs in `reward/1`, where the caps live. Keeping the two apart means the
+coupling must be *written* by somebody rather than merely permitted:
 
-```javascript
+> An observance that could carry its own reward is a slot machine with
+> liturgical vocabulary.
+
+A `ritual/1` observance therefore carries **no amount, no gold, no value** — only
+what happened, its evidence, and who witnessed it.
+
+**4. The log is append-only.** A correction is a new observance whose
+`supersedes` names the old one and whose state is `void`. Nothing is edited;
+nothing is deleted. A `void` that names nothing is a deletion with better
+manners, and the validator says so.
+
+## The Shape
+
+A fragment is one subject's calendar: the liturgies it publishes and the
+observances performed against them.
+
+```json
 {
-  id: "ritual/academy/completion-2026-09-25-a7f2b1c3",
-  kind: "completion",        // completion | achievement | contribution | etc.
-  subject: "person/alice",    // who the ritual is about
-  object: "course/101",       // what/where it happened
-  witness: "org/flashy-academy",  // who observed it
-  when: "2026-09-25T18:00:00Z",   // when it happened
-  claimedValue: "100-gold",   // what value was earned
-  claimedOutcome: "completed" // what state was achieved
-}
-```
-
-### Sealed Ritual
-
-A ritual that a witness has cryptographically affirmed. Sealing creates:
-- A **canonical JSON** form (sorted keys, deterministic)
-- A **content-addressed digest** (sha256 of canonical form)
-- A **signature** (HMAC proving the witness affirmed it)
-- A **sealing timestamp** (when the witness affirmed)
-
-```javascript
-{
-  ritual: { /* the ritual object above */ },
-  canonical: "{\"kind\":\"completion\",...}",  // sorted keys, no whitespace
-  digest: "a1b2c3d4e5f6g7h8i9j0k1l2m3n4o5p6",  // sha256(canonical)
-  signature: "x1y2z3...",     // HMAC signature
-  at: "2026-09-25T18:05:00Z",  // when sealed
-  by: "person/verifier-alice"  // who sealed it
-}
-```
-
-### Non-Identifying Projection
-
-What the public sees. A projection reveals:
-- **ref**: An opaque reference (digest prefix, no relationship to ritual id)
-- **kind**: The type of observance (completion, achievement, etc.)
-- **sealedAt**: When the witness affirmed it
-
-It reveals **nothing about**:
-- The subject (person/alice is hidden)
-- The object (course/101 is hidden)
-- The claimed value (100-gold is hidden)
-- The witness identity (org/flashy-academy is hidden)
-
-```javascript
-{
-  ref: "vrf/a1b2c3d4e5f6",  // 12-char digest prefix, no meaning
-  kind: "completion",        // only the type
-  sealedAt: "2026-09-25T18:05:00Z"  // only the time
-}
-```
-
-**Why?** A small-space identifier (person/alice, email, timestamp + org) can be brute-forced. An opaque handle (`vrf/a1b2c3d4e5f6`) with no relationship to any user value cannot be attacked. Different networks read the same digest and independently decide its weight.
-
-### Two Key Invariants
-
-**1. Rituals are immutable once sealed.**
-
-The digest is computed from canonical JSON. If a single byte changes, the digest changes. A sealed ritual that produces a different digest has been tampered with.
-
-```javascript
-// Sealed ritual with digest "a1b2c3d4e5f6..."
-
-// Try to tamper: change claimed value
-const tampered = { ...sealed.ritual, claimedValue: "1000-gold" };
-
-// Recompute digest
-const newDigest = sha256(canonical(tampered));
-
-// Mismatch! Verification fails
-verify(tampered) // false
-```
-
-**2. The public sees only content-free projections.**
-
-The notary log (public record) holds only `{ref, kind, sealedAt}`. It never holds:
-- The sealed ritual (that would leak identifying data)
-- The digest pre-image (the canonical JSON)
-- Anything that can link back to a person
-
-This is why the `ref` is derived from the digest of the projection itself, never from the ritual id or subject.
-
-## Basic Operations
-
-### Create a Ritual
-
-```javascript
-import { createRitual } from '@rites/core';
-
-const ritual = createRitual({
-  kind: 'completion',
-  subject: 'person/alice',
-  object: 'course/flashy-academy/101',
-  witness: 'org/flashy-academy',
-  claimedValue: '100-gold',
-  claimedOutcome: 'completed'
-});
-
-console.log(ritual.id);      // ritual/academy/completion-2026-09-25-a7f2b1c3
-console.log(ritual.kind);    // completion
-console.log(ritual.subject); // person/alice
-```
-
-### Seal a Ritual
-
-```javascript
-import { seal } from '@rites/core';
-
-const sealed = seal(ritual, {
-  by: 'person/verifier-alice',  // Only people seal, never agents
-  key: 'verifier-secret-key'
-});
-
-console.log(sealed.digest);     // a1b2c3d4e5f6g7h8i9j0k1l2m3n4o5p6
-console.log(sealed.signature);  // x1y2z3...
-console.log(sealed.at);         // 2026-09-25T18:05:00Z
-```
-
-### Verify a Seal
-
-```javascript
-import { verify } from '@rites/core';
-
-const isValid = verify(sealed);
-
-if (isValid) {
-  console.log('Ritual is genuine and unmodified');
-} else {
-  console.log('Ritual has been tampered with');
-}
-```
-
-Verification is **deterministic and portable**:
-- Same ritual + key = same result every time
-- Works in Node.js and browser (sha256 is portable)
-- No secrets required to verify (signature is included)
-- Can be verified offline
-
-### Create a Non-Identifying Projection
-
-```javascript
-import { nonIdentifyingProjection } from '@rites/core';
-
-const projection = nonIdentifyingProjection(sealed);
-
-console.log(projection.ref);      // vrf/a1b2c3d4e5f6
-console.log(projection.kind);     // completion
-console.log(projection.sealedAt); // 2026-09-25T18:05:00Z
-
-// Observer's perspective: They know *a* completion happened,
-// but not to whom, where, or for what value.
-```
-
-### Create Multiple Rituals and Seal
-
-```javascript
-const rituals = [
-  {
-    kind: 'completion',
-    subject: 'person/alice',
-    object: 'course/101',
-    witness: 'org/academy',
-    claimedValue: '100-gold',
-    claimedOutcome: 'completed'
-  },
-  {
-    kind: 'achievement',
-    subject: 'person/alice',
-    object: 'hackathon/2026-09',
-    witness: 'org/academy',
-    claimedValue: '500-gold',
-    claimedOutcome: '1st-place'
-  },
-  {
-    kind: 'contribution',
-    subject: 'person/bob',
-    object: 'repo/magician',
-    witness: 'org/magician',
-    claimedValue: '250-gold',
-    claimedOutcome: 'merged-pr'
-  }
-];
-
-const sealed_rituals = rituals
-  .map(r => createRitual(r))
-  .map(r => seal(r, { by: 'person/verifier', key: 'secret-key' }));
-
-console.log(`Sealed ${sealed_rituals.length} rituals`);
-```
-
-## Verification in Practice
-
-### Verify All Seals
-
-```javascript
-const verifications = sealed_rituals.map((s, i) => ({
-  ritual: i,
-  valid: verify(s, { key: s.signature })
-}));
-
-verifications.forEach(v => {
-  console.log(`Ritual ${v.ritual}: ${v.valid ? '✓ valid' : '✗ invalid'}`);
-});
-```
-
-### Detect Tampering
-
-```javascript
-// Original ritual was sealed with value "100-gold"
-const original = sealed_rituals[0];
-
-// Someone tries to change it to "1000-gold"
-const tampered = {
-  ...original,
-  ritual: { ...original.ritual, claimedValue: '1000-gold' }
-};
-
-// Verification fails because the digest no longer matches
-const isValid = verify(tampered, { key: original.signature });
-console.log(isValid); // false
-```
-
-The tampering is **provably detected** because:
-1. The canonical form changed (different claimedValue)
-2. The digest is computed from canonical form
-3. The new digest doesn't match the sealed digest
-4. Verification returns false
-
-## Standing Systems
-
-Different networks weight the same sealed event differently:
-
-**Network A** (strict): Only accepts completions sealed by `org/flashy-academy`
-```javascript
-const projections = sealed_rituals
-  .filter(s => s.by === 'person/verifier-alice')  // Only this verifier
-  .filter(s => s.ritual.witness === 'org/flashy-academy')
-  .map(s => nonIdentifyingProjection(s));
-```
-
-**Network B** (open): Accepts completions from any witness
-```javascript
-const projections = sealed_rituals
-  .filter(s => s.ritual.kind === 'completion')
-  .map(s => nonIdentifyingProjection(s));
-```
-
-**Network C** (weighted): Applies decay based on seal age
-```javascript
-const now = Date.now();
-const projections = sealed_rituals
-  .filter(s => {
-    const age = now - new Date(s.at).getTime();
-    return age < 365 * 24 * 60 * 60 * 1000;  // Less than a year old
-  })
-  .map(s => nonIdentifyingProjection(s));
-```
-
-All three networks read the same sealed rituals but apply different policies. The seal proves the ritual's content is genuine; the policy decides its weight.
-
-## Real-World Example: Course Completion
-
-### Scenario: ACME Academy Issues and Seals
-
-Alice completes a course. ACME Academy creates and seals a ritual:
-
-```javascript
-const completion = createRitual({
-  kind: 'completion',
-  subject: 'person/alice',
-  object: 'course/acme-academy/blockchain-101',
-  witness: 'org/acme-academy',
-  claimedValue: '50-gold',
-  claimedOutcome: 'passed'
-});
-
-const sealed = seal(completion, {
-  by: 'person/instructor-bob',
-  key: 'acme-private-key'
-});
-
-// Publish to notary log
-const projection = nonIdentifyingProjection(sealed);
-// { ref: "vrf/a7f2b1c3d5e6", kind: "completion", sealedAt: "2026-09-25T18:00:00Z" }
-```
-
-### Network A: Flashy Academy (Trusts ACME Academy)
-
-Flashy Academy fetches the sealed ritual and verifies it:
-
-```javascript
-const isValid = verify(sealed);
-
-if (isValid && sealed.ritual.witness === 'org/acme-academy') {
-  // Credit Alice with 50 gold
-  await rails.issueReward('person/alice', '50-gold', {
-    reason: 'Course completion (verified)',
-    sealedAt: sealed.at
-  });
-}
-```
-
-### Network B: Some Other Network (Weights Differently)
-
-Another network reads the same seal but applies its own policy:
-
-```javascript
-// Example: requires witness in our pre-approved list
-if (isValid && approvedWitnesses.includes(sealed.ritual.witness)) {
-  // Different amount, different decay rule
-  const weight = computeWeight(sealed.at);  // Decays over time
-  const credit = BigInt(sealed.ritual.claimedValue.split('-')[0]) * weight / 100n;
-  
-  await their_ledger.recordStanding('person/alice', credit);
-}
-```
-
-**Key insight:** The seal proves the ritual is real. Each network decides:
-- Which witnesses to trust
-- How much weight to give
-- How quickly to decay
-- Whether to require re-sealing
-
-One ritual, multiple trusts. No central authority needed.
-
-## Handling Seal Expiry
-
-Sealed rituals never expire on their own. But networks may discount old seals:
-
-```javascript
-const SEAL_FRESHNESS_THRESHOLD = 365 * 24 * 60 * 60 * 1000;  // 1 year
-
-function isFresh(sealed) {
-  const age = Date.now() - new Date(sealed.at).getTime();
-  return age < SEAL_FRESHNESS_THRESHOLD;
-}
-
-// Network policy: only accept seals less than a year old
-const fresh_projections = sealed_rituals
-  .filter(s => isFresh(s))
-  .map(s => nonIdentifyingProjection(s));
-```
-
-This is a **network choice**, not a format constraint. The seal is permanent; the weight decays.
-
-## Integration with Flashy Estate
-
-### In the Transparency Log (flashy-network)
-
-The Rites notary log is one source of sealed events:
-
-```
-/.well-known/notary.fragment.json
-[
-  { ref: "vrf/a1b2c3d4e5f6", kind: "completion", sealedAt: "2026-09-25T18:00:00Z" },
-  { ref: "vrf/x9y8z7w6v5u4", kind: "achievement", sealedAt: "2026-09-25T19:00:00Z" },
-  ...
-]
-```
-
-### With Magician Routing (trust/1)
-
-A Magician router can use Rites events to weight trust edges:
-
-```javascript
-// Alice has participated in 3 sealed completions from trusted witnesses
-const sealed_events = notaryLog.filter(e => e.kind === 'completion');
-const weight = sealed_events.length * 10;  // Base weight on standing
-
-// Adjust trust graph edge
-graph.updateEdge('person/alice', 'person/bob', {
-  trust: weight,
-  decayRate: 'annual'
-});
-```
-
-### With AAO Governance (aao/1)
-
-A charter can require sealed events for promotion:
-
-```javascript
-{
-  kind: 'flashyos/1',
-  name: 'Academy',
-  roles: [
+  "contract": "ritual/1",
+  "subject": "org/ritualos",
+  "generated": "2026-09-01T06:00:00Z",
+  "liturgies": [
     {
-      id: 'role/instructor',
-      authority: ['can:issue'],
-      requiresSealed: {
-        kind: 'achievement',
-        minimumCount: 5
+      "id": "daily-office",
+      "title": "The Daily Office",
+      "cadence": "daily",
+      "rite": ["refresh the fragment", "seal the log", "dispatch to the merge"],
+      "published_by": "person/michael",
+      "since": "2026-09-01T00:00:00Z"
+    }
+  ],
+  "observances": [
+    {
+      "id": "obs-2026-09-01-flashyos",
+      "liturgy": "daily-office",
+      "performer": "agent/flashyos-ci",
+      "for": "org/flashyos",
+      "at": "2026-09-01T04:23:00Z",
+      "recorded": "2026-09-01T04:23:07Z",
+      "evidence": "https://github.com/FlashyLabs/flashyos/actions/runs/17284",
+      "state": "witnessed",
+      "witness": {
+        "by": "org/gda-capital",
+        "basis": "https://gda.group/.well-known/flashyos-directory.json",
+        "at": "2026-09-01T05:00:00Z"
       }
     }
   ]
 }
 ```
 
-## Privacy by Design
+### A Liturgy
 
-### What the Public Sees
+| Field | Rule |
+|-------|------|
+| `id` | Unique within the fragment |
+| `title` | Required — a name a person recognises |
+| `cadence` | One of `daily`, `weekly`, `monthly`, `seasonal`, `once`. A closed list, so a new rhythm is a decision |
+| `rite` | A non-empty list of steps. A liturgy with no rite is a name with no practice |
+| `published_by` | A `person/` id. Publishing a liturgy asks agents to act, and a person answers for the asking |
+| `since` | ISO timestamp |
 
-The notary log (public):
+### An Observance
+
+| Field | Rule |
+|-------|------|
+| `id` | Unique within the fragment — append-only; a correction is a new observance |
+| `liturgy` | Must name a liturgy in this fragment. An observance of nothing is activity, not practice |
+| `performer` | An `agent/` id. A person's own act is work, recorded in `shipped/1`; `ritual/1` records what agents observe |
+| `for` | An `org/` or `person/` id — the principal who answers |
+| `at` / `recorded` | ISO timestamps; `recorded` may not precede `at` |
+| `evidence` | An `https://` URL a stranger can open. Without one the observance is a claim, and this format does not carry claims |
+| `state` | `performed` → `witnessed` → `consecrated`, or `void`. No state is skippable upward; a `performed` observance carrying a witness or consecration block is refused |
+| `witness` | Required from `witnessed` up: `{ by, basis, at }`. `by` is an `org/` or `person/` that is **neither the performer nor its principal**; `basis` is the witness's **own** `https://` URL |
+| `consecration` | Required at `consecrated`: `{ by, at }`. `by` is a `person/` id |
+| `supersedes` | Required when `void`; must name another observance in this log |
+
+## The State Ladder
+
+```
+performed  →  witnessed  →  consecrated
+                                 ↓
+                              (or) void
+```
+
+Each transition adds a block and cannot be skipped:
+
+- **performed**: The performer (an agent) did the rite. Evidence URL required.
+- **witnessed**: A third party — not the performer, not its principal — attests
+  it, from their *own* URL. This is what makes witness independent.
+- **consecrated**: A human (`person/`) confers consequence. Only now does the
+  observance count toward standing.
+- **void**: A correction. `supersedes` names the observance it replaces.
+
+A `performed` observance that arrives carrying a witness block is **refused** —
+the ladder is climbed by transition, never by assertion. You cannot declare
+yourself witnessed; someone else must witness you.
+
+## Why Independent Witness Matters
+
+The witness `by` must be **neither the performer nor its principal**, and
+`basis` must be the witness's **own** URL:
+
 ```json
-[
-  { "ref": "vrf/a1b2c3d4e5f6", "kind": "completion", "sealedAt": "..." }
-]
-```
-
-A curious observer learns:
-- *A* completion happened
-- When it was sealed
-
-They learn **nothing about**:
-- Who the subject is
-- What they completed
-- Who witnessed it
-- What value it carried
-
-### Why Digest Prefixes Instead of Random IDs?
-
-If we used random IDs (`vrf/random-uuid`), we'd break content-addressability. If we used ritual IDs (`ritual/alice/completion-...`), we'd leak the subject.
-
-Digest prefixes (`vrf/` + 12-char hex) give us:
-- **Determinism**: Same ritual always produces same ref
-- **Opacity**: The ref has no relationship to personal data
-- **Uniqueness**: Different rituals produce different refs
-- **Portability**: Any verifier can recompute the ref
-
-## Publishing and Verification
-
-### Witness Publishes Sealed Ritual
-
-A witness (ACME Academy) seals and publishes:
-
-```javascript
-// 1. Create ritual
-const ritual = createRitual({ /* ... */ });
-
-// 2. Seal it
-const sealed = seal(ritual, { by: 'person/instructor', key: 'secret' });
-
-// 3. Publish sealed ritual somewhere safe
-await storage.save(sealed);
-
-// 4. Add projection to notary log
-const projection = nonIdentifyingProjection(sealed);
-await notaryLog.append(projection);
-```
-
-### Observer Verifies
-
-An observer fetches the sealed ritual and verifies it:
-
-```javascript
-// 1. Fetch sealed ritual
-const sealed = await storage.fetch('ritual-id');
-
-// 2. Verify seal (portable, no secrets needed)
-const isValid = verify(sealed);
-
-if (isValid) {
-  // 3. Read projection and weight it
-  const projection = nonIdentifyingProjection(sealed);
-  const weight = computeWeight(projection.sealedAt);
-  
-  // 4. Apply to local standing system
-  await standing.record(weight, projection.kind);
+"witness": {
+  "by": "org/gda-capital",                                   // not org/flashyos
+  "basis": "https://gda.group/.well-known/flashyos-directory.json",  // gda's URL
+  "at": "2026-09-01T05:00:00Z"
 }
 ```
 
-### Verification Works Offline
+If the witness could cite the performer's URL, the performer would be witnessing
+itself with an extra step. Requiring the witness's own URL means the attestation
+is anchored to a party that answers separately.
 
-Because sha256 is portable and the signature is included:
+## Content-Addressed Sealing and Non-Identifying Projection
+
+Two concepts from the broader estate apply to a `ritual/1` log, and
+[Example 12 in flashy-examples](https://github.com/flashylabs/flashy-examples/tree/main/examples/12-rites)
+demonstrates them in isolation:
+
+**Content-addressed digest.** A sealed log entry's digest is computed over its
+canonical JSON. A verifier recomputes the canonical form *from the entry itself*
+— never trusting a stored canonical string — so swapping the content while
+leaving a stale digest in place is detected:
 
 ```javascript
-// Browser verification (no API call needed)
-import { verify } from '@rites/verify';
-
-const isValid = verify(sealedRitual);
-console.log(isValid ? 'Genuine ✓' : 'Tampered ✗');
+function verify(sealed) {
+  const canonical = canonicalJSON(sealed.entry);   // recompute FROM the entry
+  const recomputed = sha256(canonical);
+  return recomputed === sealed.digest;             // tamper flips this to false
+}
 ```
 
-## Real-World Challenges and Solutions
+**Non-identifying projection.** The public transparency leaf reveals only that
+*an observance of some kind reached a state at a time* — never who, what, or
+where:
 
-### Challenge: Seal Authority Rotation
-
-A witness rotates their signing key. Old seals were signed with the old key.
-
-**Solution**: Include key fingerprint in seal metadata. Observers maintain a timeline:
 ```javascript
-const verification = {
-  ritual: sealed.ritual,
-  keyId: '2026-01-to-2026-09',
-  valid: verify(sealed, { keyId })
-};
+{
+  ref: "vrf/a1b2c3d4e5f6",   // digest prefix; no relationship to any subject id
+  state: "consecrated",       // the state reached
+  at: "2026-09-01T05:00:00Z"  // when
+}
 ```
 
-### Challenge: Network Divergence
+A small-space identifier (an org id, an email, a timestamp) can be brute-forced,
+so hashing one does not hide it. The only safe public handle is one derived from
+the digest, with no relationship to any subject value.
 
-Network A trusts witness X; Network B does not.
+> **Note on Example 12.** Example 12 is a *simplified concepts exercise* for
+> sealing and projection. It does **not** implement the full `ritual/1` shape
+> above (liturgies, the state ladder, evidence URLs, independent witness,
+> `person/` consecration, append-only `supersedes`), and it must not be read as
+> the canonical format. Model real `ritual/1` fragments on this guide and the
+> spec, not on the example's simplified record.
 
-**Solution**: This is intentional. The seal proves the ritual; each network decides the trust. No forced consensus.
+## Real-World Example: A Daily Practice
 
-### Challenge: Revoking a Ritual
+RitualOS publishes a liturgy — a daily rite its CI performs — and each day's run
+is an observance climbing the ladder:
 
-Alice completes a course, then later it's discovered she cheated. Can we revoke the seal?
-
-**Solution**: No. Seals are immutable. The solution is for the network to mark seals as revoked:
-```javascript
-await revocationLog.mark(sealed.digest, 'cheated');
+**Day 1, the CI runs (performed):**
+```json
+{
+  "id": "obs-2026-09-01-ritualos",
+  "liturgy": "daily-office",
+  "performer": "agent/ritualos-ci",
+  "for": "org/ritualos",
+  "at": "2026-09-01T04:00:00Z",
+  "recorded": "2026-09-01T04:00:05Z",
+  "evidence": "https://github.com/FlashyLabs/ritualos/actions/runs/9001",
+  "state": "performed"
+}
 ```
 
-Observers read both the seal and the revocation log and decide what to do.
+**A third party attests it (witnessed):** GDA Capital, from its own directory
+URL, confirms the run happened. The observance transitions to `witnessed`.
+
+**A human confers consequence (consecrated):** `person/michael` consecrates it.
+Only now does the practice count toward RitualOS's standing — and any *reward*
+is computed separately in `reward/1`, never here.
+
+Over a month, thirty consecrated observances against `daily-office` are visible,
+verifiable proof that the practice held — and a gap in the calendar is equally
+visible.
+
+## Integration with the Flashy Estate
+
+`ritual/1` is one of four interoperating standards:
+
+| Standard | Format | Solves |
+|----------|--------|--------|
+| **Trust Routing** | `trust/1` | Consent paths through graphs (Magician) |
+| **Federated Roadmaps** | `intent/1` | Roadmap visibility without logins (IntentMesh) |
+| **Witnessed Observances** | `ritual/1` | Legible, witnessed practice (Rites) |
+| **Governance** | `aao/0.1` | Machine-readable authority + conformance |
+
+They compose:
+- **AAO** declares who may publish a liturgy and who may consecrate
+- **Rites** records the practice; **Magician** doctrine (standing from others'
+  assertions) governs how consecrated observances count
+- **`reward/1`** — separate by design — is where accrual and caps live
+- **IntentMesh** holds the future tense; `ritual/1` the present; `shipped/1` the past
 
 ## Resources
 
-- **Full Spec:** [ritual/1 SPEC.md](https://github.com/FlashyLabs/intentmesh/blob/main/SPEC.md)
-- **Adoption Guide:** See Example 12 in flashy-examples
-- **Reference Implementation:** [Rites Core](https://github.com/FlashyLabs/rites)
-- **Live Examples:** flashy-network's notary log at `/.well-known/notary.fragment.json`
+- **Spec:** [`Rites-Network/SPEC.md`](https://github.com/FlashyLabs/Rites-Network/blob/main/SPEC.md)
+- **Concepts exercise:** [Example 12: Sealing & Projection](https://github.com/flashylabs/flashy-examples/tree/main/examples/12-rites)
+- **The three tenses:** `docs/tenses.md` in the estate
+- **Sibling formats:** `backlog/1` (future), `shipped/1` (past)
 
 ## Next Steps
 
-1. **Understand the invariants**: Immutability (digest-based), opacity (no identifying data in public log)
-2. **Read Example 12**: Working code showing ritual creation, sealing, verification, projections
-3. **Try verification**: Download a sealed ritual; verify it matches its digest
-4. **Integrate with your standing system**: Weight sealed events, apply decay, decide trust
+1. **Declare a liturgy**: name a recurring rite, its cadence, and its steps; a person publishes it
+2. **Record observances**: an agent performs; the evidence is an https URL a stranger can open
+3. **Climb the ladder by transition**: get witnessed by an independent party, then consecrated by a human
+4. **Keep reward out**: any accrual lives in `reward/1`, never in the observance
+5. **Correct by superseding**: never edit; append a `void` observance naming the old one
 
-Rites transforms reputation from a private score into a transparent, auditable, verifiable record backed by sealed proof.
+`ritual/1` turns a practice from something visible only by side effects into a
+witnessed, verifiable record a stranger can check.
