@@ -1,16 +1,27 @@
-# Flashy Documentation Hub
+⚡ **FLASHY DOCUMENTATION** — The Complete Reference for a Consent-Gated Economy
 
-Comprehensive guides and references for the Flashy ecosystem: Ledger, Rails, Magician, and FlashyID. Learn how the four systems integrate to build decentralized finance, consent-gated transfers, trust routing, and OAuth identity.
+> Everything you need to understand, build, and deploy the Flashy ecosystem. From core concepts to production patterns.
 
-## Quick Start
+Comprehensive guides and references for Ledger, Rails, Magician, and FlashyID. Learn how the four systems integrate to build decentralized finance, consent-gated transfers, trust routing, and OAuth identity.
 
-**New to Flashy?** Start here:
+## 🚀 Quick Start (30 minutes)
 
-1. [System Architecture](docs/architecture/overview.md) — understand how all four systems fit together
-2. [Ledger Basics](docs/guides/ledger-101.md) — learn append-only settlement
-3. [Rails Consent](docs/guides/rails-consent.md) — understand the approval gate
-4. [Magician Trust](docs/guides/magician-routing.md) — discover trust graphs and routing
-5. [FlashyID OAuth](docs/guides/flashyid-oauth.md) — learn OAuth 2.1 and delegation
+**New to Flashy?** Read in this order:
+
+1. ⚡ [System Architecture](docs/architecture/overview.md) (10 min) — How all four systems fit together
+2. 📊 [Ledger Basics](docs/guides/ledger-101.md) (5 min) — Append-only settlement
+3. ✅ [Rails Consent](docs/guides/rails-consent.md) (5 min) — The approval gate
+4. 🧭 [Magician Trust](docs/guides/magician-routing.md) (5 min) — Trust graphs and routing
+5. 🔐 [FlashyID OAuth](docs/guides/flashyid-oauth.md) (5 min) — Identity and delegation
+
+**Then run the [working examples](https://github.com/flashylabs/flashy-examples):**
+```bash
+npm install && npm run examples:ledger
+npm run examples:rails
+npm run examples:magician
+npm run examples:flashyid
+npm run examples:combined
+```
 
 ## Documentation Structure
 
@@ -48,19 +59,16 @@ Comprehensive guides and references for the Flashy ecosystem: Ledger, Rails, Mag
 - **[monitoring.md](docs/deployment/monitoring.md)** — Health checks; observability
 - **[production-patterns.md](docs/deployment/production-patterns.md)** — Error recovery, rate limiting, audit trails
 
-## Key Concepts
+## 🏗️ The Four Systems at a Glance
 
-### Ledger
-Append-only settlement engine. Every transaction is immutable, idempotent, and multi-asset. Holders are opaque identities; balances never go negative.
+| System | What It Does | Invariant |
+|--------|-------------|-----------|
+| **📊 Ledger** | Multi-asset settlement engine (append-only, immutable) | Balance never goes negative |
+| **✅ Rails** | Consent-gated transfers with attenuation | Value never moves without approval |
+| **🧭 Magician** | Trust routing and sealed introductions | Declined intro is opaque to requester |
+| **🔐 FlashyID** | OAuth 2.1 with delegated authority | Grants narrow only, never widen |
 
-### Rails
-Consent layer on Ledger. Value moves only with holder approval. Grants can be attenuated (scoped) but never widened. Revocation is immediate.
-
-### Magician
-Trust routing and introduction sealing. Builds graphs of edges between parties, routes introduction requests through them, and seals outcomes cryptographically (sha256).
-
-### FlashyID
-OAuth 2.1 and delegated authority. Issues verifiable credentials; delegation is attenuation (child can never hold authority parent lacks).
+All four systems work together — FlashyID authenticates, Magician routes through trust, Rails gates the transfer, Ledger records it immutably.
 
 ## Running the Examples
 
