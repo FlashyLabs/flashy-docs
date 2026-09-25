@@ -1,0 +1,11 @@
+{
+  "name": "flashy-docs",
+  "version": "1.0.0",
+  "private": true,
+  "license": "Apache-2.0",
+  "description": "Comprehensive documentation hub for Flashy ecosystem",
+  "scripts": {
+    "test": "echo 'Documentation tests coming soon'",
+    "lint": "echo 'Lint configuration coming soon'"
+  }
+}
