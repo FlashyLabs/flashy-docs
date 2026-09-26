@@ -139,70 +139,50 @@ don't work for you:
 > A suite held together by a short contract survives; one held together by a
 > long contract gets forked.
 
-## Validation Concepts (Example 13)
+## Validation in Code (Example 13)
 
 [Example 13 in flashy-examples](https://github.com/flashylabs/flashy-examples/tree/main/examples/13-aao-validation)
-is a **simplified teaching model** — it validates a stripped-down charter shape
-to demonstrate the validation *concepts* (explicit authority, closed member
-lists, no dangling references, duplicate detection). It is **not** the canonical
-`@flashyos/aao` manifest above; production conformance uses `npx @flashyos/agent
+is a faithful, dependency-free model of the `@flashyos/aao` static checker —
+`validateCharter` runs the same rules against the `aao:"0.1"` manifest, and
+`conformance` answers the seven questions (the four static answered, the three
+live reported `deferred`). Production conformance runs `npx @flashyos/agent
 conform`.
 
-The concepts it teaches transfer directly:
+### Capabilities Name Actions, Explicitly
 
-### Explicit Authority (No Implicit Permissions)
-
-Every permission a role holds is listed. Nothing is inferred.
+Every capability a role holds is listed and names an action. Nothing is inferred.
 
 ```javascript
-const role = {
-  id: 'role/admin',
-  authority: ['can:write'],   // Explicitly named
-  members: ['person/alice']   // Explicitly listed
-};
-
-// No implicit permissions — alice can write, nothing else
-hasCap(charter, 'person/alice', 'can:write');   // true
-hasCap(charter, 'person/alice', 'can:delete');  // false
+roleHasCapability(charter, 'consecration', 'consecrate');  // true
+roleHasCapability(charter, 'witness', 'consecrate');       // false — closed
 ```
 
-### Closed Member Lists (Exhaustive)
+### Stray Keys Are Refused
 
-"Not listed" means "does not have it." There is no wildcard, no inheritance.
+A top-level key that is neither a spec field nor `x-` prefixed fails: a manifest
+carrying an unknown field has changed the subject, not answered the question.
 
 ```javascript
-// Bob is not in the members list
-hasCap(charter, 'person/bob', 'can:write');  // false
+validateCharter({ ...charter, foo: 1 }).valid;        // false
+validateCharter({ ...charter, 'x-comment': [] }).valid; // true — x- is allowed
 ```
 
-### No Dangling References
+### Escalation Must Name a Declared Role
 
-A capability that points at a role that does not exist is a validation error.
+An escalation path to nobody is worse than none.
 
 ```javascript
-const charter = {
-  roles: [{ id: 'role/admin', /* ... */ }],
-  capabilities: [
-    { id: 'cap/x', role: 'role/nonexistent', action: 'can:write' }  // ❌
-  ]
-};
-
-validateCharter(charter).valid;  // false — references non-existent role
+validateCharter({ ...charter, escalation: 'ghost' }).valid;  // false
 ```
 
-### Duplicate Detection
+### Roles Are Responsibilities, Not Codenames
 
-Role IDs and capability IDs must be unique within a charter.
+A role name is capped at 24 characters and must be a responsibility a stranger
+recognises; a role with no capability is refused.
 
 ```javascript
-const charter = {
-  roles: [
-    { id: 'role/admin', /* ... */ },
-    { id: 'role/admin', /* ... */ }  // ❌ Duplicate
-  ]
-};
-
-validateCharter(charter).valid;  // false — Duplicate role ID
+validateCharter({ ...charter, roles: [{ ...role, name: 'nova' }] });        // codename
+validateCharter({ ...charter, roles: [{ ...role, capabilities: [] }] });    // refused
 ```
 
 ## The Attenuation Connection
@@ -283,7 +263,7 @@ two files — no onboarding call.
 - **What an AAO Is:** [gda.group answer](https://gda.group/answers/what-is-an-ai-autonomous-organization/)
 - **Package:** `@flashyos/aao` (canonical source in `FlashyLabs/flashyos` → `packages/aao`)
 - **A charter in production:** [flashyos.roles.json](https://github.com/FlashyLabs/flashyos/blob/main/flashyos.roles.json)
-- **Teaching model:** [Example 13: AAO Validation](https://github.com/flashylabs/flashy-examples/tree/main/examples/13-aao-validation)
+- **Working example:** [Example 13: AAO validation](https://github.com/flashylabs/flashy-examples/tree/main/examples/13-aao-validation)
 
 ## Next Steps
 

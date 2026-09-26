@@ -164,47 +164,44 @@ If the witness could cite the performer's URL, the performer would be witnessing
 itself with an extra step. Requiring the witness's own URL means the attestation
 is anchored to a party that answers separately.
 
-## Content-Addressed Sealing and Non-Identifying Projection
+## Metrics, the Anti-Metric, and the Projection
 
-Two concepts from the broader estate apply to a `ritual/1` log, and
+Standing must be legible without being gameable. Two functions carry that, and
 [Example 12 in flashy-examples](https://github.com/flashylabs/flashy-examples/tree/main/examples/12-rites)
-demonstrates them in isolation:
+implements both.
 
-**Content-addressed digest.** A sealed log entry's digest is computed over its
-canonical JSON. A verifier recomputes the canonical form *from the entry itself*
-— never trusting a stored canonical string — so swapping the content while
-leaving a stale digest in place is detected:
-
-```javascript
-function verify(sealed) {
-  const canonical = canonicalJSON(sealed.entry);   // recompute FROM the entry
-  const recomputed = sha256(canonical);
-  return recomputed === sealed.digest;             // tamper flips this to false
-}
-```
-
-**Non-identifying projection.** The public transparency leaf reveals only that
-*an observance of some kind reached a state at a time* — never who, what, or
-where:
+**Metrics ship the witnessed share with the raw count.** `metrics()` returns
+`witnessed` and `consecrated` *beside* `performed`, so a renderer cannot show the
+flattering number alone. Raw observance volume is the anti-metric — the number a
+faucet inflates:
 
 ```javascript
-{
-  ref: "vrf/a1b2c3d4e5f6",   // digest prefix; no relationship to any subject id
-  state: "consecrated",       // the state reached
-  at: "2026-09-01T05:00:00Z"  // when
-}
+metrics(fragment);
+// { performed: 30, witnessed: 28, consecrated: 26 }
 ```
 
-A small-space identifier (an org id, an email, a timestamp) can be brute-forced,
-so hashing one does not hide it. The only safe public handle is one derived from
-the digest, with no relationship to any subject value.
+**The projection keeps the evidence and carries a note.** `project()` returns the
+fragment whole — evidence URLs intact — plus a note a renderer may not drop,
+stating how many observances carry consequence. A summary that stripped the
+evidence URLs and kept the flattering digits would be the anti-metric rule run
+backwards:
 
-> **Note on Example 12.** Example 12 is a *simplified concepts exercise* for
-> sealing and projection. It does **not** implement the full `ritual/1` shape
-> above (liturgies, the state ladder, evidence URLs, independent witness,
-> `person/` consecration, append-only `supersedes`), and it must not be read as
-> the canonical format. Model real `ritual/1` fragments on this guide and the
-> spec, not on the example's simplified record.
+```javascript
+project(fragment).note;
+// "26 of 30 observances carry consequence (consecrated); 28 witnessed."
+```
+
+A practising subject serves its fragment — whole and verbatim — at
+`/.well-known/ritual.json` (exported as `WELL_KNOWN`). `node vendor-ritual.mjs
+check <https://domain>` fetches and validates the served copy the way a stranger
+would.
+
+> **Sealing is a version 2 candidate, not part of `ritual/1` today.** The spec
+> (§7) is explicit: no sealing, no checkpoint leaves, no cross-fragment witness
+> federation yet. When sealing lands, an observance becomes a `checkpoint/1`
+> leaf and it will *reuse* the shared canonicalisation in `@flashyos/verify`
+> rather than restating it — sealing rules are shared, never re-implemented per
+> format.
 
 ## Real-World Example: A Daily Practice
 
@@ -257,7 +254,7 @@ They compose:
 ## Resources
 
 - **Spec:** [`Rites-Network/SPEC.md`](https://github.com/FlashyLabs/Rites-Network/blob/main/SPEC.md)
-- **Concepts exercise:** [Example 12: Sealing & Projection](https://github.com/flashylabs/flashy-examples/tree/main/examples/12-rites)
+- **Working example:** [Example 12: ritual/1](https://github.com/flashylabs/flashy-examples/tree/main/examples/12-rites)
 - **The three tenses:** `docs/tenses.md` in the estate
 - **Sibling formats:** `backlog/1` (future), `shipped/1` (past)
 
