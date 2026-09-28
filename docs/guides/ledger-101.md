@@ -259,6 +259,6 @@ npm test examples/01-ledger-basics
 
 ## Next Steps
 
-- Try the [Ledger Example](../../examples/01-ledger-basics) and run its tests
+- Try the [Ledger Example](https://github.com/flashylabs/flashy-examples/tree/main/examples/01-ledger-basics) and run its tests
 - Learn [Rails Consent](rails-consent.md) to add an approval gate on top
-- Read [Ledger Design](../architecture/ledger-design.md) for internals
+- Read the [Ledger API](../api/ledger-api.md) for the exports as measured against source — where this guide and that page disagree, the API page was measured

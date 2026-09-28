@@ -65,15 +65,29 @@ Before opening a PR:
 ## Checking Your Work
 
 ```bash
-# Verify links (coming soon)
+# Every relative link in every .md resolves to a file in this tree.
+# External links are skipped, not fetched. Fenced and inline code is ignored.
 npm run check:links
 
-# Verify code samples
+# Every ```js / ```mjs / ```javascript fence parses under `node --check`.
+# TypeScript fences are counted and skipped: nothing dependency-free checks them.
 npm run check:samples
 
-# Full check
+# Both, in that order. This is what .github/workflows/doc-checks.yml runs.
 npm test
+
+# Regenerate docs/STATUS.md from the sibling checkouts' manifests.
+npm run status
 ```
+
+All three are `tools/*.mjs`, import only `node:` builtins, and need no
+install. `doc-checks.yml` runs the first two on every push and pull request
+with no `|| true`; `secret-scan.yml` calls flashy-infra's shared reusable.
+
+`docs/STATUS.md` is generated. It reports each sibling checkout's declared
+package name, version, commit and branch, or "sibling checkout absent" — and
+carries no uptime, availability or latency figure, because nothing here
+measures one.
 
 ## House Rules — True in Every Flashy Repository
 
@@ -155,13 +169,28 @@ npm test
 
 ## Next Steps for This Repository
 
-- [ ] Write API references for each subsystem (ledger-api.md, rails-api.md, etc.)
-- [ ] Write troubleshooting guides (faq.md, debugging.md, errors.md)
-- [ ] Write deployment runbook (runbook.md, security.md, monitoring.md)
-- [ ] Add local setup guide (setup-local.md)
-- [ ] Create link validator (check:links)
-- [ ] Create code sample validator (check:samples)
-- [ ] Wire into CI (npm test on every push)
+Done, and enforced by `npm test`:
+
+- [x] API references for each subsystem (`docs/api/*.md`), each measured
+      against a named commit of its source
+- [x] Local setup guide (`docs/guides/setup-local.md`) — the sibling-checkout
+      install path, since the packages are not on the public registry
+- [x] Link validator (`check:links`) and code sample validator (`check:samples`)
+- [x] Wired into CI (`doc-checks.yml`; `npm test` on every push and PR)
+- [x] `docs/STATUS.md` generated from the sibling manifests, no invented figures
+
+Still to write — listed under **Planned pages** in `README.md` and linked from
+nowhere until each exists (the Layout above is the promised structure):
+
+- [ ] Architecture pages: `ledger-design.md`, `rails-consent.md`,
+      `magician-routing.md`, `flashyid-identity.md`, `integration-patterns.md`
+- [ ] Troubleshooting: `faq.md`, `debugging.md`, `errors.md`, `performance.md`
+- [ ] Deployment: `runbook.md`, `security.md`, `monitoring.md`, `production-patterns.md`
+- [ ] Bring the five concept guides (`ledger-101`, `rails-consent`,
+      `magician-routing`, `flashyid-oauth`, `combined-workflow`) into line with
+      the measured API pages — their samples name methods the packages do not
+      export
+- [ ] A TypeScript sample checker, once a dependency-free way exists
 
 ## License
 

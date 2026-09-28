@@ -88,7 +88,7 @@ const rails = new Rails({
 });
 
 // ✅ Every transfer requires consent
-const draft = rails.draftTransfer({ ... });
+const draft = rails.draftTransfer({ /* fromId, toId, amount, source, idempotencyKey */ });
 const consentToken = await getApprovalFromHolder(draft);
 const result = rails.execute(draft, consentToken);  // token validated here
 ```
@@ -232,16 +232,16 @@ Alice                Bob                Carol              Dave
 // ✅ Full stack deployment
 const fullStack = {
   // 1. FlashyID authenticates
-  flashyId: new FlashyIDProvider({ ... }),
+  flashyId: new FlashyIDProvider({ /* issuer, jwks */ }),
   
   // 2. Magician routes through trust
-  magician: new MagicianRouter({ ... }),
+  magician: new MagicianRouter({ /* graph */ }),
   
   // 3. Rails gates with consent
-  rails: new Rails({ ... }),
+  rails: new Rails({ /* ledger, consent policy */ }),
   
   // 4. Ledger settles immutably
-  ledger: new Ledger({ ... })
+  ledger: new Ledger({ /* store */ })
 };
 
 // Execution order matters
@@ -387,10 +387,11 @@ const token = await secretManager.get('TELEGRAM_BOT_TOKEN');
 
 ## Resources
 
-- [Ledger Design](../architecture/ledger-design.md)
-- [Rails Consent](../architecture/rails-consent.md)
-- [Magician Routing](../architecture/magician-routing.md)
-- [FlashyID Identity](../architecture/flashyid-identity.md)
+- [Ledger API](../api/ledger-api.md)
+- [Rails API](../api/rails-api.md)
+- [Magician API](../api/magician-api.md)
+- [FlashyID API](../api/flashyid-api.md)
+- [Local setup](../guides/setup-local.md)
 - [Working Examples](https://github.com/flashylabs/flashy-examples)
 
 ---

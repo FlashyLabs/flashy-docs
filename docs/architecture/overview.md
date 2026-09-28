@@ -171,8 +171,13 @@ A calling system catches errors from subsystems and may translate them to its ow
 
 ## Next Steps
 
-- [Ledger Design](ledger-design.md) — Dig into append-only settlement
-- [Rails Consent](rails-consent.md) — Understand the approval gate in detail
-- [Magician Routing](magician-routing.md) — Learn trust graphs and sealing
-- [FlashyID Identity](flashyid-identity.md) — Explore OAuth 2.1 and delegation
-- [Integration Patterns](integration-patterns.md) — See how systems integrate in practice
+- [Ledger API](../api/ledger-api.md) — The settlement engine's exports, measured against source
+- [Rails API](../api/rails-api.md) — The approval gate in detail
+- [Magician API](../api/magician-api.md) — Trust graphs, the router and sealing
+- [FlashyID API](../api/flashyid-api.md) — Assertions, the grant kernel and delegation
+- [Combined Workflow](../guides/combined-workflow.md) — The four systems in one flow
+- [Deployment Patterns](../deployment/patterns.md) — How the systems are deployed together
+
+The per-system architecture pages (`ledger-design.md`, `rails-consent.md`,
+`magician-routing.md`, `flashyid-identity.md`, `integration-patterns.md`) are
+planned and not yet written; the README lists them under *Planned pages*.

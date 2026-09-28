@@ -27,8 +27,8 @@ What should this guide cover?
 
 Link to existing related docs that this would build on or extend:
 
-- [Existing guide](../docs/guides/...)
-- [Architecture doc](../docs/architecture/...)
+- [Existing guide](../../docs/guides/)
+- [Architecture doc](../../docs/architecture/)
 
 ## Outline (Optional)
 
@@ -47,7 +47,7 @@ Any other details about why this documentation is needed or who would benefit.
 ---
 
 **Before submitting:**
-- [ ] I searched the [documentation](../) for existing guides
-- [ ] I checked the [GitHub Discussions](../../discussions) for related topics
+- [ ] I searched the [documentation](../../docs/) for existing guides
+- [ ] I checked the [GitHub Discussions](https://github.com/flashylabs/flashy-docs/discussions) for related topics
 - [ ] My request is specific and actionable
 - [ ] I'm willing to help write or review this guide

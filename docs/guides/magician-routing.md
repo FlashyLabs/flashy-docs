@@ -321,6 +321,6 @@ npm test examples/03-magician-intro
 
 ## Next Steps
 
-- Try the [Magician Example](../../examples/03-magician-intro) and run its tests
+- Try the [Magician Example](https://github.com/flashylabs/flashy-examples/tree/main/examples/03-magician-intro) and run its tests
 - Learn [FlashyID OAuth](flashyid-oauth.md) to add delegated authority
-- Read [Magician Routing](../architecture/magician-routing.md) for internals
+- Read the [Magician API](../api/magician-api.md) for the exports as measured against source — where this guide and that page disagree, the API page was measured

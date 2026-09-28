@@ -297,6 +297,6 @@ npm test examples/02-rails-consent
 
 ## Next Steps
 
-- Try the [Rails Example](../../examples/02-rails-consent) and run its tests
+- Try the [Rails Example](https://github.com/flashylabs/flashy-examples/tree/main/examples/02-rails-consent) and run its tests
 - Learn [Magician Routing](magician-routing.md) to add trust-based introductions
-- Read [Rails Design](../architecture/rails-consent.md) for internals
+- Read the [Rails API](../api/rails-api.md) for the exports as measured against source — where this guide and that page disagree, the API page was measured

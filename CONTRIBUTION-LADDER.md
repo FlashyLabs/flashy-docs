@@ -388,7 +388,7 @@ Start → Bug Report (15 min)
 
 1. **Bugs:** Look for issues labeled `bug` or `help wanted`
 2. **Docs:** Search for `TODO` or broken links
-3. **Examples:** Check the [ROADMAP.md](ROADMAP.md) for planned examples
+3. **Examples:** Check the [flashy-examples README](https://github.com/flashylabs/flashy-examples) for what exists and what is wanted
 4. **Features:** Ask in [GitHub Discussions](https://github.com/flashylabs/flashy-examples/discussions)
 
 ### Before You Start

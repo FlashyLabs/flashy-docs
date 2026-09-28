@@ -3,9 +3,16 @@
   "version": "1.0.0",
   "private": true,
   "license": "Apache-2.0",
-  "description": "Comprehensive documentation hub for Flashy ecosystem",
+  "description": "Documentation hub for the Flashy ecosystem",
+  "type": "module",
+  "engines": {
+    "node": ">=22"
+  },
   "scripts": {
-    "test": "echo 'Documentation tests coming soon'",
-    "lint": "echo 'Lint configuration coming soon'"
+    "check:links": "node tools/check-links.mjs",
+    "check:samples": "node tools/check-samples.mjs",
+    "status": "node tools/status.mjs",
+    "test": "npm run check:links && npm run check:samples",
+    "lint": "npm run check:links"
   }
 }

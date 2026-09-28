@@ -279,6 +279,6 @@ npm test examples/04-flashyid-oauth
 
 ## Next Steps
 
-- Try the [FlashyID Example](../../examples/04-flashyid-oauth) and run its tests
+- Try the [FlashyID Example](https://github.com/flashylabs/flashy-examples/tree/main/examples/04-flashyid-oauth) and run its tests
 - Learn [Combined Workflow](combined-workflow.md) to see all systems together
-- Read [FlashyID Identity](../architecture/flashyid-identity.md) for internals
+- Read the [FlashyID API](../api/flashyid-api.md) for the exports as measured against source — where this guide and that page disagree, the API page was measured

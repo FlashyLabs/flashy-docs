@@ -24,7 +24,7 @@ IntentMesh solves this with:
 A single planned initiative or task.
 
 ```javascript
-{
+const item = {
   id: "intent/acme/settlement-rails",
   kind: "initiative",  // initiative | task | research
   title: "Settlement rails for cross-border payouts",
@@ -46,7 +46,7 @@ This prevents stale intentions from lingering forever. An intention that nobody 
 
 One organization's complete intent declaration.
 
-```javascript
+```jsonc
 {
   "intent": "1",
   "source": "repo/acme",

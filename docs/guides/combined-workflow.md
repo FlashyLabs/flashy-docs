@@ -323,6 +323,6 @@ Tests verify:
 
 ## Next Steps
 
-- Run the [Combined Example](../../examples/05-combined-workflow)
-- Learn [Production Patterns](../deployment/production-patterns.md)
-- Read [Troubleshooting](../troubleshooting/faq.md) for common issues
+- Run the [Combined Example](https://github.com/flashylabs/flashy-examples/tree/main/examples/05-combined-workflow)
+- Learn [Deployment Patterns](../deployment/patterns.md)
+- Read the API pages for the exports as measured against source: [Ledger](../api/ledger-api.md), [Rails](../api/rails-api.md), [Magician](../api/magician-api.md), [FlashyID](../api/flashyid-api.md)
