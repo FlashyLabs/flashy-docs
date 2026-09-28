@@ -27,24 +27,26 @@ Find something that doesn't work. Report it with clear reproduction steps.
 ### Example
 
 ```
-Title: Ledger rejects valid Minor type amount
+Title: fromDecimal refuses a whole-number amount at 2 decimals
 
 Environment:
-- Node 18.2.0, macOS 13
-- @flashylabs/ledger 1.0.5
+- Node 22.x, macOS 13
+- @flashylabs/ledger at commit <sha> (built from the sibling checkout)
 
 Steps:
-1. Create ledger
-2. Register USD asset
-3. Issue toMinor('100.00') to a holder
+1. Materialize FLASHY_GOLD for tenant 'flashy'
+2. post() an EARN of fromDecimal(100, gold.decimals) to an opaque identity
+3. readState the same account
 
-Expected: Balance is 10000
+Expected: balance is 10000
 
-Actual: Throws "Invalid amount type"
+Actual: post() throws PrecisionError
 
 Code:
-const amount = toMinor('100.00');
-await ledger.issue('user:alice', 'USD', amount);  // throws
+const amount = fromDecimal(100, gold.decimals);
+const entry = post(await store.readState(ref), { tenantId: 'flashy', identityId: 'h_2c91',
+  asset: gold, amount, kind: 'EARN', source: { type: 'quest', id: 'q_1' },
+  idempotencyKey: 'quest:q_1:h_2c91', occurredAt: new Date() });  // throws
 ```
 
 ### Skills Gained

@@ -2,7 +2,7 @@
 
 > Everything you need to understand, build, and deploy the Flashy ecosystem. From core concepts to production patterns.
 
-Comprehensive guides and references for Ledger, Rails, Magician, and FlashyID. Learn how the four systems integrate to build decentralized finance, consent-gated transfers, trust routing, and OAuth identity.
+Comprehensive guides and references for Ledger, Rails, Magician, and FlashyID. Learn how the four systems integrate to build append-only settlement, consent-gated transfers, trust routing, and delegated identity. Every guide's samples name the exports the packages actually have, measured against a named commit.
 
 ## 🚀 Quick Start (30 minutes)
 
@@ -12,7 +12,7 @@ Comprehensive guides and references for Ledger, Rails, Magician, and FlashyID. L
 2. 📊 [Ledger Basics](docs/guides/ledger-101.md) (5 min) — Append-only settlement
 3. ✅ [Rails Consent](docs/guides/rails-consent.md) (5 min) — The approval gate
 4. 🧭 [Magician Trust](docs/guides/magician-routing.md) (5 min) — Trust graphs and routing
-5. 🔐 [FlashyID OAuth](docs/guides/flashyid-oauth.md) (5 min) — Identity and delegation
+5. 🔐 [FlashyID Assertions](docs/guides/flashyid-oauth.md) (5 min) — Verified assertions and delegation chains
 
 **Then run the [working examples](https://github.com/flashylabs/flashy-examples):**
 ```bash
@@ -31,11 +31,11 @@ Every link below points at a page that exists; `npm test` fails otherwise.
 - **[overview.md](docs/architecture/overview.md)** — How all four systems work together; data flow diagrams
 
 ### Guides ([docs/guides/](docs/guides/))
-- **[ledger-101.md](docs/guides/ledger-101.md)** — Asset registration, issuance, transfers, balance queries
-- **[rails-consent.md](docs/guides/rails-consent.md)** — Draft, approve, execute; attenuation and revocation
-- **[magician-routing.md](docs/guides/magician-routing.md)** — Building trust graphs, routing requests, sealing outcomes
-- **[flashyid-oauth.md](docs/guides/flashyid-oauth.md)** — OAuth flow, token verification, delegation chains
-- **[combined-workflow.md](docs/guides/combined-workflow.md)** — End-to-end example: Alice pays Dave through trust chain
+- **[ledger-101.md](docs/guides/ledger-101.md)** — `post` + a store: assets, opaque identity, `Minor`, transfers, the hash chain, idempotent replay
+- **[rails-consent.md](docs/guides/rails-consent.md)** — `RailsService`: draft → consent → execute; grants, attenuation, revocation
+- **[magician-routing.md](docs/guides/magician-routing.md)** — trust/1 graphs, `findPaths` and the veil, the consent machine, sealed introduction/1 records
+- **[flashyid-oauth.md](docs/guides/flashyid-oauth.md)** — `verifyAssertion` / `authorize`, the grant kernel, the enforcement gate, rail tokens (the SDK is not an OAuth client; the guide says where login lives)
+- **[combined-workflow.md](docs/guides/combined-workflow.md)** — End-to-end example: Alice pays Dave in Flashy Gold through a consented, sealed trust chain
 - **[setup-local.md](docs/guides/setup-local.md)** — Building the four packages from sibling checkouts (they are not on the public registry)
 - **[mesh-integration.md](docs/guides/mesh-integration.md)** — Consuming the estate's four standards
 - **[intentmesh-roadmaps.md](docs/guides/intentmesh-roadmaps.md)**, **[rites-witnessed-observances.md](docs/guides/rites-witnessed-observances.md)**, **[aao-governance-conformance.md](docs/guides/aao-governance-conformance.md)** — the `intent/1`, `ritual/1` and AAO formats
@@ -71,12 +71,12 @@ exists. No dates: a page is added when someone writes it from the source.
 
 | System | What It Does | Invariant |
 |--------|-------------|-----------|
-| **📊 Ledger** | Multi-asset settlement engine (append-only, immutable) | Balance never goes negative |
-| **✅ Rails** | Consent-gated transfers with attenuation | Value never moves without approval |
+| **📊 Ledger** | Multi-asset settlement engine (append-only, hash-chained) | Balance never goes negative; a replay settles once |
+| **✅ Rails** | Consent-gated movement of Flashy Gold, with attenuated grants | Value leaves a holder only through `execute` with their consent |
 | **🧭 Magician** | Trust routing and sealed introductions | Declined intro is opaque to requester |
-| **🔐 FlashyID** | OAuth 2.1 with delegated authority | Grants narrow only, never widen |
+| **🔐 FlashyID** | OIDC provider + SDK for assertions and delegation chains | Chains narrow only, never widen |
 
-All four systems work together — FlashyID authenticates, Magician routes through trust, Rails gates the transfer, Ledger records it immutably.
+All four systems work together — FlashyID signs the assertion and the consent, Magician routes through trust, Rails gates the transfer, Ledger records it immutably.
 
 ## Running the Examples
 
@@ -95,8 +95,8 @@ npm test                          # All tests
 
 **True in every Flashy repository:**
 
-- Amounts are `Minor` (branded integer), never raw numbers. Convert with `toMinor()` / `toGold()`
-- Consent is explicit; never auto-approve. Every Rails execution requires a consent token
+- Amounts are `Minor` (branded integer), never raw numbers. Convert at the edge with the ledger's `fromDecimal()` / `toDecimal()`, or Rails' `toMinor()` / `toGold()` for Flashy Gold
+- Consent is explicit; never auto-approve. Every Rails `execute` requires a consent bound to that exact draft
 - Grants narrow, never widen. Attenuation is the only allowed delegation operation
 - Sealed means sealed. Outcomes use portable sha256; replayed digests are refused
 - Identity is opaque. No hardcoded names; holders are unforgeable identifiers

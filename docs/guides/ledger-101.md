@@ -1,264 +1,348 @@
 # Ledger 101: Append-Only Settlement
 
-Learn the Ledger, Flashy's append-only settlement engine. Everything is immutable, idempotent, and multi-asset.
+Learn `@flashylabs/ledger`, Flashy's append-only, multi-asset settlement
+engine. Every sample on this page names an export the package actually has;
+the names and signatures are the [Ledger API](../api/ledger-api.md) page's,
+read from `src/index.ts`.
+
+Measured against flashy-ledger at `7b254be` (branch `claude/dreamy-bell-2e5nq3`;
+`src/` is byte-identical to the `eac50d8` the API page measured — the one
+commit between them changes publishing, schemas and repository docs).
 
 ## What Problem Does It Solve?
 
-You need a system where:
-- Money balances **never go negative** (invariant enforced)
-- Every transaction is **immutable** (audit trail)
-- Transactions are **idempotent** (replay-safe: same input = same result, no double-spend)
-- Support **multiple assets** (USD, EUR, Flashy Gold, etc.)
-- Identity is **opaque** (no exposed PII; accounts are unforgeable IDs)
+You need a record of value where:
 
-The Ledger is that system.
+- A balance **never goes negative** unless a flow explicitly allows debt
+- Every entry is **immutable** — the store has no update and no delete
+- A retried write is **idempotent** — the same key settles once, never twice
+- Several **assets** live side by side and never mix
+- Identity is **opaque** — no email, phone or wallet address ever enters the chain
+
+The Ledger is that record.
+
+## The Shape of the API
+
+There is no `Ledger` class, no `registerAsset`, no `issue`, no `getBalance`.
+The package is a pure decision function, `post`, that turns *current state +
+a command* into the entry that should exist (or throws), and a storage port,
+`LedgerStore`, that appends what `post` returns. You read state from the
+store, call `post`, and append.
+
+```javascript
+import { InMemoryLedgerStore, post, fromDecimal, FLASHY_GOLD, materialize } from '@flashylabs/ledger'
+
+const store = new InMemoryLedgerStore()
+const gold = materialize(FLASHY_GOLD, { id: 'flashy-gold', tenantId: 'flashy' })
+
+// An opaque, tenant-scoped surrogate. Never an email, a phone number or a wallet.
+const alice = 'h_2c91'
+const ref = { tenantId: 'flashy', identityId: alice, assetId: gold.id }
+
+const state = await store.readState(ref)          // { balance: 0, headHash: null }
+const entry = post(state, {
+  tenantId: 'flashy',
+  identityId: alice,
+  asset: gold,
+  amount: fromDecimal(100, gold.decimals),        // 10000 minor units = 100.00 FG
+  kind: 'EARN',
+  source: { type: 'quest', id: 'q_1' },
+  idempotencyKey: 'quest:q_1:h_2c91',
+  occurredAt: new Date(),
+})
+const { deduplicated } = await store.append(entry) // false the first time
+```
+
+`post` reads no database, writes nothing and calls no clock — `occurredAt` is
+always an argument. That purity is why the same rules run unchanged against
+`InMemoryLedgerStore` (the reference and conformance target) and
+`MongoLedgerStore`.
 
 ## Key Concepts
 
-### Holder
-An unforgeable account identifier. Holders are opaque—no names, emails, or PII exposed in the Ledger itself.
+### Identity
 
-```
-holder = "user:alice"      # unforgeable ID
-holder = "account:gold-123" # service assigns
-holder = "dao:treasury"     # any scheme works
+Entries key on an opaque, tenant-scoped `identityId`. The rule is enforced
+inside `post()`, not written down and hoped for: `assertOpaqueIdentity` throws
+`NaturalKeyError` (code `NATURAL_KEY_IDENTITY`) when the id looks like an
+email, an E.164 phone number, an EVM address or a TON address. UUIDs,
+ObjectIds, bare integers and base58 tokens pass — the guard is deliberately
+narrow so nobody switches it off.
+
+```javascript
+import { surrogateIdentity, looksLikeNaturalKey } from '@flashylabs/ledger'
+
+looksLikeNaturalKey('alice@example.com')   // 'an email address'
+looksLikeNaturalKey('h_2c91')              // null
+
+// Derive a stable, per-tenant surrogate from whatever you hold. The salt is a
+// secret: at least 16 characters, from Secret Manager, never in a file.
+const identityId = surrogateIdentity('customer-7f3a', process.env.TENANT_SALT)
 ```
 
-Ledger never knows who a holder really is. That's the calling system's responsibility.
+The Ledger never learns who a holder is. That is the calling system's job,
+and a link recorded inside an immutable entry could never be revoked.
 
 ### Asset
-A registered token type. Each asset has:
-- Name (e.g., "USD", "Flashy Gold")
-- Decimals (e.g., 2 for USD, 8 for some crypto)
 
-Assets must be registered before use. Once registered, they can be issued and transferred.
+An `Asset` is a definition materialized for a tenant. The package ships
+definitions — `FLASHY_GOLD` (symbol `FG`, **2 decimals**, `REWARD_CURRENCY`),
+`FLASHY_WORK_UNIT`, and the commodities `WHEAT`, `WOOD`, `STONE`, `IRON` —
+and `defineAsset` validates a new one at module load (lower-case kebab slug,
+2–8 upper-case symbol, `decimals` in `0..8`, one of four classes).
 
-```typescript
-await ledger.registerAsset({
-  symbol: 'USD',
-  decimals: 2,
-  name: 'US Dollars'
-});
+```javascript
+import { defineAsset, materialize, FLASHY_GOLD, WHEAT } from '@flashylabs/ledger'
+
+const PARTNER_POINTS = defineAsset({
+  slug: 'partner-points',
+  symbol: 'PP',
+  name: 'Partner Points',
+  decimals: 0,
+  class: 'PARTNER_CREDIT',        // REWARD_CURRENCY | COMMODITY_UNIT | PARTNER_CREDIT | SKILL_XP
+  description: 'Credit a partner property issues and redeems.',
+})
+
+// Entries are keyed on the id you supply here; materialize throws on an empty one.
+const gold = materialize(FLASHY_GOLD, { id: 'flashy-gold', tenantId: 'flashy' })
+const wheat = materialize(WHEAT, { id: 'wheat', tenantId: 'flashy' })
+const points = materialize(PARTNER_POINTS, { id: 'partner-points', tenantId: 'partner-1' })
 ```
+
+There is no registration call. `SKILL_XP` assets are not transferable by
+class; `postTransfer` refuses them.
 
 ### Minor
-The smallest indivisible unit of an asset. **All amounts in the Ledger are `Minor` (branded integer), never floats.**
 
-For USD with 2 decimals:
-- $50.00 = 5000 Minor
-- $0.01 = 1 Minor
-- $100.25 = 10025 Minor
+Every amount is a `Minor`: a whole number of the asset's smallest unit,
+branded so a raw `number` does not type-check as one. For Flashy Gold (2
+decimals): 50.00 FG is `5000`, 0.01 FG is `1`.
 
-Convert with utilities:
-```typescript
-import { toMinor, toGold } from '@flashylabs/ledger';
+```javascript
+import { fromDecimal, toDecimal, minor, add, negate, PrecisionError } from '@flashylabs/ledger'
 
-const major = toMinor("50.00");  // 5000 (number)
-const readable = toGold(5000);   // "50.00" (string)
+const fifty = fromDecimal(50, 2)      // 5000
+toDecimal(5000, 2)                    // 50 — a number, for display only
 
-// NEVER do this:
-const balance = 5000;
-const newBalance = balance + 1; // Don't add Minor to numbers!
+// fromDecimal refuses over-precision rather than rounding
+try { fromDecimal(0.5, 0) } catch (e) { e instanceof PrecisionError } // true
+
+// Arithmetic goes through the money module, never raw operators
+const total = add(fifty, minor(25))   // 5025
+const debit = negate(fifty)           // -5000
 ```
 
-### Transaction
-An immutable record of value movement. Every transaction has:
-- **ID**: Unique identifier (unforgeable)
-- **Kind**: "issuance", "transfer", or custom
-- **From**: Holder (for transfers) or null (for issuance)
-- **To**: Holder (always required)
-- **Amount**: Minor (always positive)
-- **Timestamp**: When settled (immutable)
-- **Idempotency Key**: Prevents replays (same key = same result)
+`toMinor` / `toGold` are **not** in this package. They are Flashy Rails
+helpers over `fromDecimal` / `toDecimal` with Gold's two decimals — see
+[Rails Consent](rails-consent.md).
+
+### Entry
+
+What `post` returns and the store keeps. Every entry carries:
+
+- `tenantId`, `identityId`, `assetId`
+- `amount` (signed: positive credits, negative debits), `balanceBefore`, `balanceAfter`
+- `kind`: `EARN | SPEND | TRANSFER_IN | TRANSFER_OUT | ADJUSTMENT | REVERSAL | EXPIRY | MIGRATION | DECAY`
+- `source`: `{ type, id?, description? }` — what produced the movement
+- `idempotencyKey`, `occurredAt`
+- `previousHash` and `hash` — sha256 over a fixed field order, chained onto the identity's previous entry
+
+The store assigns `id`. `metadata` is carried but not hashed.
 
 ## Basic Operations
 
-### Register an Asset
+Every sample below continues from the `store`, `gold`, `alice` and `ref`
+declared in *The Shape of the API*.
 
-```typescript
-await ledger.registerAsset({
-  symbol: 'USD',
-  decimals: 2
-});
-```
+### Credit a Holder
 
-### Issue Units (Create Money)
+Only a flow the calling system trusts should post an `EARN`; the ledger
+itself checks the command, not the caller.
 
-Only trusted issuers can issue. Issue creates money from nothing (the "credit" side of the ledger).
+```javascript
+const state = await store.readState(ref)
+await store.append(post(state, {
+  tenantId: 'flashy', identityId: alice, asset: gold,
+  amount: fromDecimal(100, gold.decimals),
+  kind: 'EARN', source: { type: 'quest', id: 'q_1' },
+  idempotencyKey: 'quest:q_1:h_2c91', occurredAt: new Date(),
+}))
 
-```typescript
-// Give Alice $100 USD
-await ledger.issue(
-  holder: "user:alice",
-  asset: "USD",
-  amount: toMinor("100.00"),
-  // Ledger generates idempotency key from holder/asset/amount
-);
-
-// Alice's balance is now $100
-const balance = await ledger.getBalance("user:alice", "USD");
-// balance === 10000 (Minor)
+const { balance } = await store.readState(ref)   // 10000
 ```
 
 ### Transfer Between Holders
 
-```typescript
-// Alice sends Dave $50 USD
-const settlement = await ledger.transfer(
-  from: "user:alice",
-  to: "user:dave",
-  asset: "USD",
-  amount: toMinor("50.00")
-);
+A transfer is two entries — the sender's `TRANSFER_OUT` and the recipient's
+`TRANSFER_IN` — appended together so the books can never hold one half.
 
-// Alice now has $50, Dave now has $50
-const alice = await ledger.getBalance("user:alice", "USD");
-// alice === 5000 (Minor) — $50.00
+```javascript
+import { postTransfer } from '@flashylabs/ledger'
 
-const dave = await ledger.getBalance("user:dave", "USD");
-// dave === 5000 (Minor) — $50.00
+const dave = 'h_7e40'
+const [fromState, toState] = await Promise.all([
+  store.readState({ tenantId: 'flashy', identityId: alice, assetId: gold.id }),
+  store.readState({ tenantId: 'flashy', identityId: dave, assetId: gold.id }),
+])
+
+const [debit, credit] = postTransfer(
+  { state: fromState, identityId: alice },
+  { state: toState, identityId: dave },
+  {
+    tenantId: 'flashy', asset: gold,
+    amount: fromDecimal(50, gold.decimals),           // positive; direction is which party is which
+    source: { type: 'payment', id: 'p_1' },
+    idempotencyKey: 'payment:p_1',                    // becomes payment:p_1:out and payment:p_1:in
+    occurredAt: new Date(),
+  },
+)
+
+await store.appendAll([debit, credit])               // all or nothing; needs a TransactionalLedgerStore
+// Alice: 5000 minor (50.00 FG)   Dave: 5000 minor (50.00 FG)
 ```
 
-### Query Balance
+### Read a Balance
 
-```typescript
-const balance = await ledger.getBalance("user:alice", "USD");
-// balance === 5000 (Minor, not a string)
+```javascript
+const { balance, headHash } = await store.readState(ref)
+// balance is a Minor (number); headHash is the hash of the latest entry, or null
 ```
 
-### View History
+### Read History and Verify the Chain
 
-```typescript
-const history = await ledger.getHistory("user:alice");
-// [{id, asset, kind, from, to, amount, timestamp}, ...]
+```javascript
+import { verifyChain, balanceOf } from '@flashylabs/ledger'
+
+const entries = await store.readEntries({ tenantId: 'flashy', identityId: alice, assetId: gold.id }) // oldest first
+const { valid, problems } = verifyChain(entries)   // every hash intact, every link and running balance consistent
+balanceOf(entries)                                  // the fold a stored balance is a cache of
 ```
 
 ## Invariants (What Must Always Be True)
 
 ### 1. No Negative Balances
 
-A holder cannot transfer out more than they hold.
+`post` throws `LedgerError` with code `INSUFFICIENT_BALANCE` when
+`state.balance + amount < 0`, unless the command sets `allowNegative: true`.
 
-```typescript
-// Alice holds $50, tries to send $100
+```javascript
+import { LedgerError } from '@flashylabs/ledger'
+
 try {
-  await ledger.transfer("user:alice", "user:bob", "USD", toMinor("100.00"));
+  post(await store.readState(ref), {
+    tenantId: 'flashy', identityId: alice, asset: gold,
+    amount: fromDecimal(-999, gold.decimals),
+    kind: 'SPEND', source: { type: 'redemption', id: 'r_1' },
+    idempotencyKey: 'redemption:r_1', occurredAt: new Date(),
+  })
 } catch (e) {
-  // Error: insufficient balance
+  if (e instanceof LedgerError && e.code === 'INSUFFICIENT_BALANCE') { /* refused before anything is written */ }
 }
 ```
 
 ### 2. Immutability
 
-Transactions never change. The ledger is append-only.
+The store port has `append`, `readState`, `readEntries` and
+`findByIdempotencyKey`. There is no update and no delete. The only way to
+undo an entry is to post its mirror image:
 
-```typescript
-const history1 = await ledger.getHistory("user:alice");
-// [{id: 1, kind: 'issuance', amount: 10000}, ...]
+```javascript
+import { reverse } from '@flashylabs/ledger'
 
-// Later:
-const history2 = await ledger.getHistory("user:alice");
-// Same as history1. Entry 1 is still immutable.
+const [original] = await store.readEntries({ tenantId: 'flashy', identityId: alice })
+const mirror = reverse(await store.readState(ref), original, 'duplicate award', new Date())
+await store.append(mirror)   // kind REVERSAL, amount negated, key reversal:<original key>
 ```
+
+History now shows both the mistake and the correction.
 
 ### 3. Idempotent Replay
 
-Same input → same result, no double-spend.
+A replayed key is **not an error**. The store returns the original entry with
+`deduplicated: true` and writes nothing.
 
-```typescript
-// First call
-const result1 = await ledger.transfer(
-  "user:alice",
-  "user:bob",
-  "USD",
-  toMinor("50.00"),
-  idempotencyKey: "tx:uuid-1234"
-);
-// result1.id === "settlement:5678"
-// Alice: $50, Bob: $50
+```javascript
+const command = {
+  tenantId: 'flashy', identityId: alice, asset: gold,
+  amount: fromDecimal(25, gold.decimals),
+  kind: 'EARN', source: { type: 'quest', id: 'q_2' },
+  idempotencyKey: 'quest:q_2:h_2c91', occurredAt: new Date(),
+}
 
-// Replay (network timeout, client retries)
-const result2 = await ledger.transfer(
-  "user:alice",
-  "user:bob",
-  "USD",
-  toMinor("50.00"),
-  idempotencyKey: "tx:uuid-1234"
-);
-// result2.id === "settlement:5678" (same!)
-// Alice: $50, Bob: $50 (unchanged!)
-// No double-spend.
+const first = await store.append(post(await store.readState(ref), command))
+// first.deduplicated === false
+
+// A retry after a timeout, same key:
+const second = await store.append(post(await store.readState(ref), command))
+// second.deduplicated === true; second.entry.id === first.entry.id; balance unchanged
 ```
+
+Keys are unique per tenant. Choose them from the business event
+(`quest:q_2:h_2c91`), never from a random value the retry cannot reproduce.
 
 ## Multi-Asset Example
 
-The Ledger handles multiple assets independently.
+Assets are isolated by `assetId`; a transfer of one never touches another.
 
-```typescript
-// Register two assets
-await ledger.registerAsset({ symbol: 'USD', decimals: 2 });
-await ledger.registerAsset({ symbol: 'EUR', decimals: 2 });
+```javascript
+import { balancesByAsset } from '@flashylabs/ledger'
 
-// Issue both to Alice
-await ledger.issue("user:alice", "USD", toMinor("100.00"));
-await ledger.issue("user:alice", "EUR", toMinor("50.00"));
+const wheatRef = { tenantId: 'flashy', identityId: alice, assetId: wheat.id }
+await store.append(post(await store.readState(wheatRef), {
+  tenantId: 'flashy', identityId: alice, asset: wheat,
+  amount: fromDecimal(40, wheat.decimals),          // wheat has 0 decimals: 40 units
+  kind: 'EARN', source: { type: 'harvest', id: 'f_3' },
+  idempotencyKey: 'harvest:f_3:h_2c91', occurredAt: new Date(),
+}))
 
-// Alice holds both
-const usd = await ledger.getBalance("user:alice", "USD");
-// usd === 10000 (Major: $100.00)
-
-const eur = await ledger.getBalance("user:alice", "EUR");
-// eur === 5000 (Major: €50.00)
-
-// Transfer USD to Bob (EUR unchanged)
-await ledger.transfer("user:alice", "user:bob", "USD", toMinor("30.00"));
-
-// Alice: USD $70, EUR €50
-// Bob: USD $30, EUR $0
+const all = await store.readEntries({ tenantId: 'flashy', identityId: alice }) // every asset, oldest first
+balancesByAsset(all)   // Map { 'flashy-gold' => 5000, 'wheat' => 40 }
 ```
+
+A bill across several assets goes through `postConsume`, which posts one
+`SPEND` per cost or none at all (`InsufficientForConsumptionError` lists
+every shortfall).
 
 ## Error Handling
 
-Ledger errors are keyed for programmatic handling:
+Every refusal is a `LedgerError` with a stable `code`:
 
-```typescript
+| Code | Thrown by |
+|---|---|
+| `MISSING_IDEMPOTENCY_KEY` | `post` — checked first |
+| `NATURAL_KEY_IDENTITY` | `post`, as `NaturalKeyError` (`kind`, `hint`) |
+| `ZERO_AMOUNT` | `post` on zero; `postTransfer` on zero or negative |
+| `INSUFFICIENT_BALANCE` | `post` without `allowNegative` |
+| `ASSET_NOT_TRANSFERABLE` | `postTransfer` on a `SKILL_XP` asset |
+| `INSUFFICIENT_FOR_CONSUMPTION`, `DUPLICATE_ASSET_IN_COMMAND` | `postConsume` |
+
+There is no `UNKNOWN_HOLDER` (an unknown identity simply has balance `0`) and
+no `DUPLICATE_IDEMPOTENCY_KEY` (a replay is an `AppendResult` with
+`deduplicated: true`).
+
+```javascript
 try {
-  await ledger.transfer("user:alice", "user:bob", "USD", toMinor("999999.00"));
+  await store.append(post(await store.readState(ref), command))
 } catch (e) {
-  if (e.code === 'INSUFFICIENT_BALANCE') {
-    console.error("Not enough funds");
-  } else if (e.code === 'UNKNOWN_HOLDER') {
-    console.error("Holder not found");
-  } else if (e.code === 'DUPLICATE_IDEMPOTENCY_KEY') {
-    console.error("This transaction was already processed");
-  }
+  if (e instanceof LedgerError) {
+    switch (e.code) {
+      case 'INSUFFICIENT_BALANCE': /* not enough funds */ break
+      case 'NATURAL_KEY_IDENTITY': /* use surrogateIdentity */ break
+      default: /* e.code is one of the seven above */
+    }
+  } else throw e
 }
-```
-
-## Testing Invariants
-
-The test suite verifies:
-- ✅ Balances never go negative
-- ✅ Issuance creates money
-- ✅ Transfers move money
-- ✅ Idempotent replay
-- ✅ Multi-asset isolation
-
-Run examples:
-```bash
-npm run examples:ledger
-npm test examples/01-ledger-basics
 ```
 
 ## House Rules
 
-- **Minor only.** Never use raw numbers for amounts. Always convert with `toMinor()` / `toGold()`
-- **Opaque identity.** Holders are IDs, not names
-- **Immutable audit trail.** History never changes
-- **Idempotency keys.** Always include them; handle replays gracefully
+- **Minor only.** Convert at the edge with `fromDecimal` / `toDecimal`; add with `add`, never `+`
+- **Opaque identity.** Surrogates, never natural keys — `post` refuses the obvious ones
+- **Immutable audit trail.** Correct with `reverse`; never edit
+- **Idempotency keys from the business event.** Handle `deduplicated: true` as success
 
 ## Next Steps
 
-- Try the [Ledger Example](https://github.com/flashylabs/flashy-examples/tree/main/examples/01-ledger-basics) and run its tests
-- Learn [Rails Consent](rails-consent.md) to add an approval gate on top
-- Read the [Ledger API](../api/ledger-api.md) for the exports as measured against source — where this guide and that page disagree, the API page was measured
+- Learn [Rails Consent](rails-consent.md) — the layer that calls `post` on your behalf and gates every debit on the holder's consent
+- Read the [Ledger API](../api/ledger-api.md) for every export, measured against source
+- [Local setup](setup-local.md) — installing the package from a sibling checkout; note its §4 on which examples in [flashy-examples](https://github.com/flashylabs/flashy-examples/tree/main/examples/01-ledger-basics) run at these commits

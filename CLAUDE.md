@@ -32,7 +32,7 @@ Comprehensive guides, architecture explanations, API references, troubleshooting
 │   │   ├── ledger-101.md       # Ledger basics
 │   │   ├── rails-consent.md    # Rails consent pattern
 │   │   ├── magician-routing.md # Magician trust graphs
-│   │   ├── flashyid-oauth.md   # FlashyID authentication
+│   │   ├── flashyid-oauth.md   # FlashyID assertions and delegation (the SDK is not an OAuth client)
 │   │   ├── combined-workflow.md # End-to-end example
 │   │   └── setup-local.md      # Local development setup
 │   ├── api/                    # API reference
@@ -144,23 +144,32 @@ Every guide should link to:
 
 Create a `.test.mjs` file in the repository for every major code sample.
 
-```typescript
+```javascript
 // docs/guides/ledger-101.test.mjs
 import { test } from 'node:test';
 import assert from 'node:assert';
-import { Ledger, toMinor, toGold } from '@flashylabs/ledger';
+import { InMemoryLedgerStore, post, fromDecimal, toDecimal, FLASHY_GOLD, materialize } from '@flashylabs/ledger';
 
-test('Ledger 101: basic transfer', async (t) => {
-  const ledger = new Ledger();
-  
-  await ledger.registerAsset({ symbol: 'USD', decimals: 2 });
-  await ledger.issue('user:alice', 'USD', toMinor('100.00'));
-  
-  const balance = await ledger.getBalance('user:alice', 'USD');
+test('Ledger 101: an EARN lands and reads back', async () => {
+  const store = new InMemoryLedgerStore();
+  const gold = materialize(FLASHY_GOLD, { id: 'flashy-gold', tenantId: 'flashy' });
+  const ref = { tenantId: 'flashy', identityId: 'h_2c91', assetId: gold.id };
+
+  await store.append(post(await store.readState(ref), {
+    tenantId: 'flashy', identityId: 'h_2c91', asset: gold,
+    amount: fromDecimal(100, gold.decimals), kind: 'EARN',
+    source: { type: 'quest', id: 'q_1' }, idempotencyKey: 'quest:q_1:h_2c91', occurredAt: new Date(),
+  }));
+
+  const { balance } = await store.readState(ref);
   assert.equal(balance, 10000);
-  assert.equal(toGold(balance), '100.00');
+  assert.equal(toDecimal(balance, gold.decimals), 100);
 });
 ```
+
+Use the names the API pages measured — there is no `Ledger` class and no
+asset registration call — and mark the fence `javascript` so
+`check:samples` parses it.
 
 Run tests as part of CI:
 ```bash
@@ -178,6 +187,12 @@ Done, and enforced by `npm test`:
 - [x] Link validator (`check:links`) and code sample validator (`check:samples`)
 - [x] Wired into CI (`doc-checks.yml`; `npm test` on every push and PR)
 - [x] `docs/STATUS.md` generated from the sibling manifests, no invented figures
+- [x] The five concept guides (`ledger-101`, `rails-consent`,
+      `magician-routing`, `flashyid-oauth`, `combined-workflow`), the
+      architecture overview and the deployment patterns rewritten against the
+      measured API pages — every sample names an export the package has, every
+      JavaScript fence parses under `check:samples`, and each page carries a
+      "Measured against" line
 
 Still to write — listed under **Planned pages** in `README.md` and linked from
 nowhere until each exists (the Layout above is the promised structure):
@@ -186,10 +201,6 @@ nowhere until each exists (the Layout above is the promised structure):
       `magician-routing.md`, `flashyid-identity.md`, `integration-patterns.md`
 - [ ] Troubleshooting: `faq.md`, `debugging.md`, `errors.md`, `performance.md`
 - [ ] Deployment: `runbook.md`, `security.md`, `monitoring.md`, `production-patterns.md`
-- [ ] Bring the five concept guides (`ledger-101`, `rails-consent`,
-      `magician-routing`, `flashyid-oauth`, `combined-workflow`) into line with
-      the measured API pages — their samples name methods the packages do not
-      export
 - [ ] A TypeScript sample checker, once a dependency-free way exists
 
 ## License

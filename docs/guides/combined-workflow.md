@@ -1,328 +1,390 @@
-# Combined Workflow: Alice Pays Dave Through Trust Chain
+# Combined Workflow: Alice Pays Dave Through a Trust Chain
 
-A complete end-to-end example using all four systems together. Alice sends $50 to Dave through a trust chain (Alice → Bob → Carol → Dave).
+One end-to-end walk through all four systems. Alice wants to settle 50.00
+Flashy Gold with Dave, whom she does not know. Magician routes an
+introduction through Bob and Carol and seals the outcome; Alice then drafts
+a Rails transfer to Dave, consents to it, and the Ledger records both
+entries. FlashyID is where the consent and any delegated authority are
+signed in production.
+
+Every sample names exports the packages actually have. Measured against
+flashy-ledger `7b254be`, flashy-rails `d4c012a`, magician `78166e4` and
+flashyid `a2706c0` (all on branch `claude/dreamy-bell-2e5nq3`; the ledger's,
+magician's and the SDK's source is unchanged since the commits the API pages
+measured, and rails' only source change is a JSDoc fix in `gold.mjs`).
 
 ## The Scenario
 
-**Actors:**
-- Alice: Has $100 USD, wants to pay Dave
-- Bob: Trusts Alice and Carol
-- Carol: Trusts Bob and Dave
-- Dave: Wants to receive payment from Alice
+**Actors** (fictional; every Magician persona carries `demo: true`):
 
-**Goal:** Alice sends $50 USD to Dave via trust chain Bob → Carol, with explicit consent at every step and cryptographic proof of agreement.
+- Alice — holds 100.00 FG; wants to pay Dave; owns the Magician graph
+- Bob — Alice's edge; knows Carol
+- Carol — Bob's edge; knows Dave
+- Dave — answers for `cap/gold-custody`; holds 10.00 FG
 
-## Architecture
+**Two kinds of identity.** Magician ids are `person/` slugs and stay in the
+graph. Ledger identities must be opaque surrogates — `h_2c91`, `h_7e40` —
+because an id that names a person cannot be taken back out of an immutable
+chain. Mapping one onto the other is the caller's job and never enters a
+record.
 
-```
-Ledger (Settlement)
-  └─ Rails (Consent Gate)
-      └─ Magician (Trust Routing)
-          └─ FlashyID (Authentication)
-```
+## How the Four Fit
 
-Data flows upward: FlashyID authenticates Alice, Magician finds the trust path, Rails collects consents, Ledger settles the transfer.
+The packages do not import each other, with one exception: Rails is built on
+the Ledger. Everything else is composition in your code.
 
-## Step-by-Step
+- **Ledger** — `post` / `postTransfer` decide; a `LedgerStore` appends. Balance never negative; replay dedups.
+- **Rails** — `draftTransfer` is pure; `execute(draft, consent)` is the one write. Grants attenuate only.
+- **Magician** — `findPaths` from the owner; every hop's owner consents; `sealOutcome` records the introduction.
+- **FlashyID** — signs the assertion, the consent token and the grant token the rail verifies; the grant kernel guarantees a chain only narrows.
 
-### 1. Setup
+## Step by Step
 
-```typescript
-import {
-  TrustGraph, Edge,
-  Rails, toMinor, toGold,
-  FlashyID
-} from '@flashylabs';
+### 1. Set Up the Rail and Fund the Holders
 
-// Initialize all systems
-const graph = new TrustGraph();
-const rails = new Rails();
-const flashyid = new FlashyID();
+```javascript
+import { RailsService } from '@flashylabs/rails'
+import { InMemoryLedgerStore } from '@flashylabs/ledger'
 
-// Issue money
-await rails.issue('user:alice', 'USD', toMinor('100.00'));
-await rails.issue('user:dave', 'USD', toMinor('10.00'));
-```
+const store = new InMemoryLedgerStore()
+const rails = new RailsService({ store })
 
-### 2. Build Trust Graph
+const ALICE = 'h_2c91'
+const DAVE = 'h_7e40'
 
-```typescript
-// Alice trusts Bob
-graph.addEdge(new Edge({
-  from: 'user:alice',
-  to: 'user:bob',
-  tier: 'direct'
-}));
-
-// Bob trusts Carol
-graph.addEdge(new Edge({
-  from: 'user:bob',
-  to: 'user:carol',
-  tier: 'direct'
-}));
-
-// Carol trusts Dave
-graph.addEdge(new Edge({
-  from: 'user:carol',
-  to: 'user:dave',
-  tier: 'direct'
-}));
-
-// Graph now: Alice → Bob → Carol → Dave
+await rails.earn({ identityId: ALICE, amount: 100, source: { type: 'quest', id: 'q_1' }, idempotencyKey: 'quest:q_1:h_2c91' })
+await rails.earn({ identityId: DAVE, amount: 10, source: { type: 'quest', id: 'q_2' }, idempotencyKey: 'quest:q_2:h_7e40' })
 ```
 
-### 3. Find Route
+### 2. Route the Introduction
 
-```typescript
-const intro = graph.route({
-  requester: 'user:alice',
-  target: 'user:dave',
-  reason: 'settlement'
-});
+```javascript
+import { parseGraph, parseIntent, findPaths } from '@magician-network/core'
 
-console.log(intro.route);
-// ['user:alice', 'user:bob', 'user:carol', 'user:dave']
+const edge = (from, to, value) => ({
+  format: 'trust/1', from, to, tier: 'private', domains: [],
+  strength: { value, register: 'asserted' },
+  provenance: [{ kind: 'worked-with', at: '2026-03-01' }],
+  asserted: '2026-03-01', renewed: '2026-09-01',
+})
+
+const graph = parseGraph(JSON.stringify({
+  format: 'magician-graph/1',
+  owner: 'person/alice',
+  people: [
+    { id: 'person/alice', name: 'Alice (demo)', capabilities: [], demo: true },
+    { id: 'person/bob', name: 'Bob (demo)', capabilities: [], demo: true },
+    { id: 'person/carol', name: 'Carol (demo)', capabilities: ['cap/logistics'], demo: true },
+    { id: 'person/dave', name: 'Dave (demo)', capabilities: ['cap/gold-custody'], demo: true },
+  ],
+  edges: [
+    edge('person/alice', 'person/bob', 0.8),
+    edge('person/bob', 'person/carol', 0.7),
+    edge('person/carol', 'person/dave', 0.9),
+  ],
+}))
+
+const intent = parseIntent({
+  id: 'settlement-custody',
+  text: 'Find a custodian who can hold settlement gold for a cross-border payment.',
+  wants: ['cap/gold-custody'],
+  opened: '2026-09-01',
+})
+
+const [path] = findPaths(graph, intent)
+// path.hops.map((h) => h.node) → ['person/bob', 'person/carol', 'person/dave']
 ```
 
-### 4. Authenticate Alice
+### 3. Collect Every Consent
 
-```typescript
-const alice = await flashyid.authenticate('alice');
-// alice.token === verified credential
-// alice.sub === 'user:alice'
+Only the owner of an edge consents to crossing it. Alice's own edge to Bob
+is a hop too.
+
+```javascript
+import { openRequest, consentHop, markIntroduced, requestState } from '@magician-network/core'
+
+let request = openRequest('req-1', intent.id, path, new Date())
+request = consentHop(request, 'person/alice')
+request = consentHop(request, 'person/bob')
+request = consentHop(request, 'person/carol')
+request = markIntroduced(request)      // throws unless every hop consented
+requestState(request)                  // 'introduced'
 ```
 
-### 5. Collect Consents
+Had Bob declined, `toRequesterView(request)` would read `{ id: 'req-1',
+state: 'unavailable' }` and the story would end there — Alice would not
+learn that Bob, or anyone, declined.
 
-```typescript
-// Bob consents to introduce Alice to Carol
-const bobConsent = graph.collectConsent({
-  hop: 'user:bob',
-  previous: 'user:alice',
-  next: 'user:carol'
-});
+### 4. Seal the Introduction
 
-// Carol consents to introduce Bob to Dave
-const carolConsent = graph.collectConsent({
-  hop: 'user:carol',
-  previous: 'user:bob',
-  next: 'user:dave'
-});
+```javascript
+import { sealOutcome, verifyIntroduction } from '@magician-network/core'
+
+const record = sealOutcome(request, intent, {
+  kind: 'deal',
+  note: 'Dave agreed to custody the settlement gold; terms signed 2026-09-20.',
+})
+verifyIntroduction(record)   // true
+// record.digest is the hex sha256 of the canonical body — portable, prefix-free
 ```
 
-### 6. Seal Introduction
+### 5. Draft the Transfer
 
-```typescript
-const sealed = graph.sealIntroduction({
-  requester: 'user:alice',
-  target: 'user:dave',
-  route: intro.route,
-  consents: [bobConsent, carolConsent],
-  sealed_at: Date.now()
-});
-
-console.log(sealed.digest);
-// "sha256:abc123def456..." (portable proof)
-```
-
-### 7. Draft Transfer
-
-```typescript
+```javascript
 const draft = rails.draftTransfer({
-  from: 'user:alice',
-  to: 'user:dave',
-  asset: 'USD',
-  amount: toMinor('50.00')
-});
-
-console.log(draft.id);
-// "draft:xyz789" (not settled yet)
+  fromId: ALICE, toId: DAVE, amount: 50,
+  source: { type: 'payment', id: 'p_1', description: `introduction ${record.digest.slice(0, 12)}` },
+  idempotencyKey: 'payment:p_1',
+})
+// draft.id === 'transfer:payment:p_1'; nothing written
 ```
 
-### 8. Get Approval
+The introduction digest rides in the entry's `source.description`, so the
+settlement points at the sealed record that preceded it without the record
+carrying any ledger data.
 
-```typescript
-// Alice approves the draft
-const approval = await Rails.createConsentToken(draft);
+### 6. Alice Consents
 
-console.log(approval);
-// "token:consent..." (time-limited, bound to draft and holder)
+In-process, `approve` builds the consent bound to this draft. In production
+the same four fields arrive as a token flashyID signed — `mintConsentToken`
+— and the rail's `FlashyIdVerifier` maps its claims onto the same shape.
+
+```javascript
+import { approve } from '@flashylabs/rails'
+
+const consent = approve(draft, ALICE, new Date())
+// { draftId: 'transfer:payment:p_1', holderId: 'h_2c91', action: 'transfer', approvedAt }
 ```
 
-### 9. Execute Settlement
+```javascript
+import { generateKeyPair } from 'jose'
+import { mintConsentToken } from '@flashyid/sdk'
 
-```typescript
-const settlement = await rails.execute(draft, approval);
-
-console.log(settlement);
-// {
-//   id: 'settlement:abc123',
-//   from: 'user:alice',
-//   to: 'user:dave',
-//   amount: 5000,
-//   asset: 'USD',
-//   status: 'settled'
-// }
+// The production shape. flashyID holds the private key; the rail holds the public JWKS.
+const { privateKey } = await generateKeyPair('EdDSA')
+const consentJws = await mintConsentToken(
+  { privateKey, issuer: 'https://id.flashyid.com', audience: 'https://rails.example' },
+  { draftId: draft.id, holderId: ALICE, action: draft.action, approvedAt: new Date() },
+)
+// claims: typ 'consent', draftId, holderId, action, approvedAt; sub = holderId; exp in 120 s
 ```
 
-### 10. Verify Balances
+### 7. Execute
 
-```typescript
-const alice_balance = await rails.getBalance('user:alice', 'USD');
-const dave_balance = await rails.getBalance('user:dave', 'USD');
-
-console.log(toGold(alice_balance)); // '50.00' (was $100, spent $50)
-console.log(toGold(dave_balance));  // '60.00' (was $10, received $50)
+```javascript
+const [debit, credit] = await rails.execute(draft, consent)
+// debit.entry.kind === 'TRANSFER_OUT' on h_2c91; credit.entry.kind === 'TRANSFER_IN' on h_7e40
+// both appended atomically; consentedAt is in each entry's metadata
 ```
+
+### 8. Read Back and Verify
+
+```javascript
+import { verifyChain as verifyLedgerChain } from '@flashylabs/ledger'
+
+await rails.balance(ALICE)   // { minor: 5000, gold: 50, symbol: 'FG' }
+await rails.balance(DAVE)    // { minor: 6000, gold: 60, symbol: 'FG' }
+
+const history = await rails.history(ALICE)              // [EARN, TRANSFER_OUT], oldest first
+verifyLedgerChain(history)                              // { valid: true, problems: [] }
+await rails.reconcile(ALICE)                            // { ok: true, balance, sealHead, … }
+```
+
+## Variant: Alice's Agent Pays Under a Delegated Grant
+
+If Alice delegates the payment to an agent, FlashyID's chain is the source of
+truth for the delegation and the rail draws down a flat, capped grant derived
+from it. `railGrantFromChain` in the SDK mints that grant as a token with a
+fixed mapping — `holderId = root`, `spenderId = leaf holder`, `capMinor =
+effective spend_max`, `expiresAt = effective exp` — and the same mapping,
+applied in-process, is a Rails `issueGrant`:
+
+```javascript
+import { issueRoot, attenuate, verifyChain as verifyGrantChain, agentSubject } from '@flashyid/sdk'
+import { issueGrant, FLASHY_GOLD_ID } from '@flashylabs/rails'
+
+const nowSec = Math.floor(Date.now() / 1000)
+const root = issueRoot({
+  rootHuman: ALICE, holder: ALICE,
+  scp: ['payment.execute'], res: ['rail:flashy-gold'],
+  lim: { spend_max: 10000 }, iat: nowSec, exp: nowSec + 7 * 86_400, jti: 'g_root',
+})
+const chain = attenuate(root, {
+  holder: agentSubject('alice-office', 'settler'),
+  lim: { spend_max: 5000 }, iat: nowSec, exp: nowSec + 86_400, jti: 'g_agent',
+})
+
+const effective = verifyGrantChain(chain, nowSec)
+if (!effective.ok) throw new Error(effective.code)       // expired | revoked | chain_widened | broken_chain
+
+const grant = issueGrant({
+  grantId: 'g_agent', holderId: effective.root, spenderId: effective.holder,
+  assetId: FLASHY_GOLD_ID, capMinor: effective.lim.spend_max, purpose: 'settlement',
+  expiresAt: new Date(effective.exp * 1000),
+})
+
+// assertSpendable runs before any write: GRANT_REVOKED, GRANT_EXPIRED, GRANT_EXCEEDED
+const { result, grant: after } = await rails.spendUnderGrant({
+  grant, amount: 50,
+  source: { type: 'payment', id: 'p_2' }, idempotencyKey: 'payment:p_2',
+})
+// result.entry.amount === -5000 on Alice's account, metadata { grantId: 'g_agent', spenderId: 'agent:alice-office/settler' }
+// after.remainingMinor === 0
+```
+
+The agent never held Alice's consent to a draft; it held an allowance she
+issued, narrowed by the chain, checked before the write. The two paths do not
+mix: a draft is executed by its holder's consent, a grant is drawn by its
+spender within its cap.
 
 ## Complete Code Example
 
-```typescript
+```javascript
+import { InMemoryLedgerStore, verifyChain as verifyLedgerChain } from '@flashylabs/ledger'
+import { RailsService, approve } from '@flashylabs/rails'
+import {
+  parseGraph, parseIntent, findPaths,
+  openRequest, consentHop, markIntroduced, toRequesterView,
+  sealOutcome, verifyIntroduction, appendOutcome,
+} from '@magician-network/core'
+
 async function main() {
-  console.log('=== Alice Pays Dave Through Trust Chain ===\n');
+  console.log('=== Alice pays Dave through a trust chain ===')
 
-  // Setup
-  const graph = new TrustGraph();
-  const rails = new Rails();
+  const rails = new RailsService({ store: new InMemoryLedgerStore() })
+  const ALICE = 'h_2c91'
+  const DAVE = 'h_7e40'
 
-  // Balances before
-  await rails.issue('user:alice', 'USD', toMinor('100.00'));
-  await rails.issue('user:dave', 'USD', toMinor('10.00'));
+  await rails.earn({ identityId: ALICE, amount: 100, source: { type: 'quest', id: 'q_1' }, idempotencyKey: 'quest:q_1:h_2c91' })
+  await rails.earn({ identityId: DAVE, amount: 10, source: { type: 'quest', id: 'q_2' }, idempotencyKey: 'quest:q_2:h_7e40' })
 
-  // Build trust graph: Alice → Bob → Carol → Dave
-  graph.addEdge(new Edge({ from: 'alice', to: 'bob', tier: 'direct' }));
-  graph.addEdge(new Edge({ from: 'bob', to: 'carol', tier: 'direct' }));
-  graph.addEdge(new Edge({ from: 'carol', to: 'dave', tier: 'direct' }));
+  const edge = (from, to, value) => ({
+    format: 'trust/1', from, to, tier: 'private', domains: [],
+    strength: { value, register: 'asserted' },
+    provenance: [{ kind: 'worked-with', at: '2026-03-01' }],
+    asserted: '2026-03-01', renewed: '2026-09-01',
+  })
+  const graph = parseGraph(JSON.stringify({
+    format: 'magician-graph/1',
+    owner: 'person/alice',
+    people: [
+      { id: 'person/alice', name: 'Alice (demo)', capabilities: [], demo: true },
+      { id: 'person/bob', name: 'Bob (demo)', capabilities: [], demo: true },
+      { id: 'person/carol', name: 'Carol (demo)', capabilities: ['cap/logistics'], demo: true },
+      { id: 'person/dave', name: 'Dave (demo)', capabilities: ['cap/gold-custody'], demo: true },
+    ],
+    edges: [
+      edge('person/alice', 'person/bob', 0.8),
+      edge('person/bob', 'person/carol', 0.7),
+      edge('person/carol', 'person/dave', 0.9),
+    ],
+  }))
+  const intent = parseIntent({
+    id: 'settlement-custody',
+    text: 'Find a custodian who can hold settlement gold for a cross-border payment.',
+    wants: ['cap/gold-custody'],
+    opened: '2026-09-01',
+  })
 
-  // Route introduction
-  const intro = graph.route({
-    requester: 'user:alice',
-    target: 'user:dave',
-    reason: 'settlement'
-  });
+  const [path] = findPaths(graph, intent)
+  if (!path) throw new Error('no trust path answers for cap/gold-custody')
+  console.log(`Route: ${['person/alice', ...path.hops.map((h) => h.node)].join(' → ')}`)
 
-  if (!intro.route) {
-    throw new Error('No trust path found');
-  }
+  let request = openRequest('req-1', intent.id, path, new Date())
+  for (const hop of path.hops) request = consentHop(request, hop.consentOf)
+  request = markIntroduced(request)
+  console.log(`Requester sees: ${toRequesterView(request).state}`)
 
-  console.log(`Route: ${intro.route.join(' → ')}\n`);
+  const record = sealOutcome(request, intent, {
+    kind: 'deal',
+    note: 'Dave agreed to custody the settlement gold; terms signed 2026-09-20.',
+  })
+  const log = appendOutcome([], record)
+  console.log(`Sealed: ${record.digest} (verifies: ${verifyIntroduction(record)}, log size ${log.length})`)
 
-  // Collect consents
-  const bobConsent = graph.collectConsent({
-    hop: 'bob',
-    previous: 'alice',
-    next: 'carol'
-  });
-
-  const carolConsent = graph.collectConsent({
-    hop: 'carol',
-    previous: 'bob',
-    next: 'dave'
-  });
-
-  // Seal
-  const sealed = graph.sealIntroduction({
-    requester: 'alice',
-    target: 'dave',
-    route: intro.route,
-    consents: [bobConsent, carolConsent],
-    sealed_at: Date.now()
-  });
-
-  console.log(`Sealed: ${sealed.digest}\n`);
-
-  // Draft transfer
   const draft = rails.draftTransfer({
-    from: 'user:alice',
-    to: 'user:dave',
-    asset: 'USD',
-    amount: toMinor('50.00')
-  });
+    fromId: ALICE, toId: DAVE, amount: 50,
+    source: { type: 'payment', id: 'p_1', description: `introduction ${record.digest.slice(0, 12)}` },
+    idempotencyKey: 'payment:p_1',
+  })
+  const consent = approve(draft, ALICE, new Date())
+  const [debit, credit] = await rails.execute(draft, consent)
+  console.log(`Settled: ${debit.entry.kind} ${debit.entry.amount} / ${credit.entry.kind} ${credit.entry.amount}`)
 
-  // Approve
-  const approval = await Rails.createConsentToken(draft);
+  const alice = await rails.balance(ALICE)
+  const dave = await rails.balance(DAVE)
+  console.log(`Alice: ${alice.gold} ${alice.symbol}   Dave: ${dave.gold} ${dave.symbol}`)
 
-  // Execute
-  const settlement = await rails.execute(draft, approval);
-
-  console.log(`Settlement: ${settlement.id}`);
-  console.log(`Status: ${settlement.status}\n`);
-
-  // Verify
-  const alice = await rails.getBalance('user:alice', 'USD');
-  const dave = await rails.getBalance('user:dave', 'USD');
-
-  console.log(`Alice balance: ${toGold(alice)}`);
-  console.log(`Dave balance: ${toGold(dave)}`);
-  console.log('\n=== Complete ===\n');
+  const { valid } = verifyLedgerChain(await rails.history(ALICE))
+  console.log(`Alice's chain verifies: ${valid}`)
+  console.log('=== Complete ===')
 }
 
-main().catch(console.error);
+main().catch((e) => { console.error(e); process.exitCode = 1 })
 ```
+
+Expected: `Alice: 50 FG   Dave: 60 FG`, both chains valid, and a 64-hex
+digest that verifies anywhere the record is carried.
 
 ## Key Invariants Verified
 
-1. **Trust path exists:** Bob and Carol are connected
-2. **Consents collected:** Every hop approved the introduction
-3. **Seal is portable:** Same hash on any platform
-4. **Transfer requires approval:** Draft can't execute without token
-5. **Balances correct:** Alice -$50, Dave +$50
-6. **Ledger immutable:** Transaction in append-only log
+1. **Trust path exists and is bounded:** three hops, found from the owner, ranked by match then hops then trust
+2. **Every hop consented:** `markIntroduced` throws on a partial yes; a decline reads `unavailable`
+3. **Seal is portable:** canonical JSON, sha256 with no `node:` imports, replay refused by `appendOutcome`
+4. **Transfer requires consent:** `execute` throws `CONSENT_REQUIRED` / `CONSENT_MISMATCH` before any read
+5. **Balances correct and non-negative:** the ledger's `post` refuses `INSUFFICIENT_BALANCE`
+6. **Ledger immutable and idempotent:** two chained entries, `verifyChain` valid, a replayed key dedups
 
 ## Production Patterns
 
 ### Error Recovery
 
-```typescript
+Ledger errors pass through Rails **unwrapped**, so the code tells you which
+layer refused.
+
+```javascript
+import { RailsError } from '@flashylabs/rails'
+import { LedgerError } from '@flashylabs/ledger'
+
 try {
-  const settlement = await rails.execute(draft, approval);
+  await rails.execute(draft, consent)
 } catch (e) {
-  if (e.code === 'INSUFFICIENT_BALANCE') {
-    console.error("Alice has insufficient funds");
-    // Retry after balance check
-  } else if (e.code === 'GRANT_REVOKED') {
-    console.error("Approval was revoked");
-    // Request new approval
-  }
+  if (e instanceof LedgerError && e.code === 'INSUFFICIENT_BALANCE') {
+    // Alice does not hold enough: nothing was written; re-draft for less or wait for an earn
+  } else if (e instanceof RailsError && e.code === 'CONSENT_MISMATCH') {
+    // the consent names another draft, holder or action: ask the holder for a consent to THIS draft
+  } else if (e instanceof RailsError && e.code === 'GRANT_REVOKED') {
+    // the grant path only: the holder took the authority back; do not retry
+  } else throw e
 }
 ```
 
-### Rate Limiting
+### Idempotent Retries
 
-Track execution rates per holder to prevent abuse.
-
-```typescript
-const lastExecution = cache.get(`execution:${draft.from}`);
-if (Date.now() - lastExecution < 1000) {
-  throw new Error("Rate limited: 1 execution per second");
-}
-```
+Derive `idempotencyKey` from the business event and retry freely: a replay of
+`execute` or `spendUnderGrant` returns `deduplicated: true` and moves nothing,
+and a replayed spend never draws a grant down twice.
 
 ### Audit Logging
 
-```typescript
-log.info({
+Log what the systems already sealed, never a re-derivation of it.
+
+```javascript
+console.log(JSON.stringify({
   event: 'settlement_executed',
-  from: settlement.from,
-  to: settlement.to,
-  amount: toGold(settlement.amount),
-  asset: settlement.asset,
-  sealed: sealed.digest,
-  timestamp: Date.now()
-});
+  entryHash: debit.entry.hash,          // the ledger's own chain hash
+  idempotencyKey: debit.entry.idempotencyKey,
+  amountMinor: debit.entry.amount,
+  introduction: record.digest,          // the sealed introduction it followed
+  consentedAt: debit.entry.metadata.consentedAt,
+}))
 ```
 
-## Testing
-
-Tests verify:
-- ✅ Happy path (all consents, settlement succeeds)
-- ✅ No trust path (route fails)
-- ✅ Insufficient balance (execution fails)
-- ✅ Missing approval (execution fails)
-- ✅ Audit trail complete
+Nothing in that line names a person: ledger ids are surrogates and the
+introduction record carries `person/` slugs, not the ledger ids.
 
 ## Next Steps
 
-- Run the [Combined Example](https://github.com/flashylabs/flashy-examples/tree/main/examples/05-combined-workflow)
-- Learn [Deployment Patterns](../deployment/patterns.md)
-- Read the API pages for the exports as measured against source: [Ledger](../api/ledger-api.md), [Rails](../api/rails-api.md), [Magician](../api/magician-api.md), [FlashyID](../api/flashyid-api.md)
+- [Deployment Patterns](../deployment/patterns.md) — how the four are deployed together
+- The API pages, each measured against source: [Ledger](../api/ledger-api.md), [Rails](../api/rails-api.md), [Magician](../api/magician-api.md), [FlashyID](../api/flashyid-api.md)
+- [Local setup](setup-local.md) §4 says which [flashy-examples](https://github.com/flashylabs/flashy-examples/tree/main/examples/05-combined-workflow) run at these commits

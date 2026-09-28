@@ -1,6 +1,15 @@
 # System Architecture Overview
 
-The Flashy ecosystem is built from four integrated systems that work together to enable decentralized finance, consent-gated transfers, trust-based routing, and delegated identity. This document explains how they fit together.
+The Flashy ecosystem is four packages that compose into consent-gated
+settlement, trust-routed introductions and delegated identity. This page
+explains how they fit together; every claim about a package is what its
+source does, not what a diagram would like it to do.
+
+Measured against flashy-ledger `7b254be`, flashy-rails `d4c012a`, magician
+`78166e4` and flashyid `a2706c0` (all on branch `claude/dreamy-bell-2e5nq3`).
+The per-package detail is on the [API pages](../api/ledger-api.md), each of
+which names the commit it read; the package source those pages describe is
+unchanged at these commits apart from a JSDoc fix in rails' `gold.mjs`.
 
 ## The Four Systems
 
@@ -12,171 +21,208 @@ The Flashy ecosystem is built from four integrated systems that work together to
 │  ┌─────────────┐  ┌──────────────┐  ┌─────────────────┐   │
 │  │   Ledger    │  │    Rails     │  │   Magician      │   │
 │  ├─────────────┤  ├──────────────┤  ├─────────────────┤   │
-│  │ Settlement  │  │ Consent Gate │  │ Trust Routing   │   │
-│  │ Multi-asset │  │ Attenuation  │  │ Graph Sealing   │   │
-│  │ Idempotent  │  │ Revocation   │  │ Introductions   │   │
+│  │ post/append │  │ draft→execute│  │ trust/1 edges   │   │
+│  │ Multi-asset │  │ Grants       │  │ Router + veil   │   │
+│  │ Hash chain  │  │ Attenuation  │  │ introduction/1  │   │
 │  └─────────────┘  └──────────────┘  └─────────────────┘   │
-│         ▲                  ▲                  ▲             │
-│         │                  │                  │             │
+│                          ▲                                  │
+│                          │ signed consent / grant tokens    │
 │  ┌──────────────────────────────────────────────────────┐  │
-│  │         FlashyID (OAuth 2.1, Delegation)            │  │
+│  │   FlashyID (OIDC provider + @flashyid/sdk)           │  │
 │  ├──────────────────────────────────────────────────────┤  │
-│  │ Authentication, Authorization, Credential Issuance   │  │
-│  │ Attenuation-only Delegation, Grant Verification      │  │
+│  │ EdDSA assertions, delegation chains that only narrow │  │
+│  │ verify · authorize · enforcement gate · rail tokens  │  │
 │  └──────────────────────────────────────────────────────┘  │
 │                                                             │
 └─────────────────────────────────────────────────────────────┘
 ```
 
+**Who depends on whom.** Rails imports the Ledger. Nothing else imports
+anything else: Magician has zero runtime dependencies, the SDK depends only
+on `jose`, and the Ledger's domain imports no driver. FlashyID reaches the
+rail as **signed tokens** the rail verifies, not as a package the rail calls.
+Everything past that is composition in the caller's code — see the
+[Combined Workflow](../guides/combined-workflow.md).
+
 ## System Responsibilities
 
-### Ledger (@flashylabs/ledger)
-**Core responsibility:** Append-only settlement with money invariants.
+### Ledger (`@flashylabs/ledger`)
 
-- Registers assets (e.g., USD, Flashy Gold)
-- Issues units to holders (opaque, unforgeable identities)
-- Records transfers between holders with immutable history
-- Enforces invariant: balance never goes negative
-- Guarantees idempotent replay (same transaction ID → same result, no double-spend)
+**Core responsibility:** append-only settlement with the money invariants.
 
-**Example:** Alice holds 100 USD. Rails asks Ledger to record a 50 USD debit to Alice (via transfer). Ledger refuses if Alice only holds 40 USD. If the same transfer is replayed, Ledger returns the original settlement unchanged.
+- A pure decision function, `post(state, command)`, and a storage port,
+  `LedgerStore`, with `append`, `readState`, `readEntries` and
+  `findByIdempotencyKey` — no update, no delete. There is no `Ledger` class.
+- Assets are definitions (`FLASHY_GOLD`, the commodities, or your own via
+  `defineAsset`) materialized per tenant; there is no registration call.
+- Identities are opaque and tenant-scoped; `post` refuses an email, phone,
+  EVM or TON address before anything is hashed.
+- Every entry hashes onto the identity's previous entry; `verifyChain`
+  detects any edit or removal.
+- `INSUFFICIENT_BALANCE` unless a flow sets `allowNegative`; a replayed
+  `idempotencyKey` returns the original with `deduplicated: true`.
 
-### Rails (@flashylabs/rails)
-**Core responsibility:** Consent-gated value transfer with constrained delegation.
+**Example:** Alice holds 100.00 FG. Rails asks the Ledger to post a 50.00 FG
+`TRANSFER_OUT` from Alice and a `TRANSFER_IN` to Dave in one atomic
+`appendAll`. The Ledger refuses if Alice holds 40.00. Replayed with the same
+key, it returns the original entries and writes nothing.
 
-- Enforces consent gate: value moves only with holder's explicit approval
-- Implements draft → approve → execute pattern (Rails drafts, user approves, Rails executes)
-- Supports grants: "Alice delegates spending authority to Bob, up to $50, for purchases only"
-- Enforces attenuation: grants can only narrow (Bob's grant can't let Carol spend more than Bob can)
-- Tracks revocation: revoked grants refuse immediately
+### Rails (`@flashylabs/rails`)
 
-**Example:** Alice drafts a transfer to Dave: "Send $50 of my USD to Dave." Rails creates a draft (no ledger update yet). Alice approves with a consent token. Rails executes the approved draft, asking Ledger to settle it. If Alice's grant to Bob is revoked, Bob cannot execute any pending transfers.
+**Core responsibility:** consent-gated movement of Flashy Gold, and
+constrained delegation.
 
-### Magician (@magician-network/core)
-**Core responsibility:** Trust-based routing and sealed introduction outcomes.
+- `RailsService` over any `LedgerStore`; decimals at the edge (`amount: 50`),
+  minor units inside, via `toMinor` / `toGold`.
+- `earn` credits without consent — receiving is not consented to, but a
+  `source` is required so no Gold is minted without a reason on the record.
+- `draftRedeem` / `draftTransfer` are pure; `execute(draft, consent)` is the
+  one place value leaves a holder, and the consent must name that exact draft,
+  holder and action.
+- `issueGrant` → `attenuate` (refuses `GRANT_WIDENED`) → `spendUnderGrant`,
+  which runs `assertSpendable` before any write; `revoke` returns a revoked
+  copy.
 
-- Builds directed graphs of trust edges (Alice→Bob, Bob→Carol, Carol→Dave)
-- Routes introduction requests through trust paths (who trusts whom enough to introduce?)
-- Collects explicit consent from every hop (each intermediate party must approve the introduction)
-- Seals outcomes: hashes the introduction cryptographically (sha256, portable across platforms)
-- Verifies seals: proves an introduction was genuinely consented to
+**Example:** Alice drafts "50.00 FG to Dave". Nothing is written. She
+approves *that* draft — `approve(draft, holderId, approvedAt)` in-process, a
+flashyID-signed consent token in production. Rails executes it against the
+Ledger. Rails never issues the consent; it checks one.
 
-**Example:** Alice wants to be introduced to Dave through Bob and Carol. Magician finds the path Alice→Bob→Carol→Dave. Alice consents to routing through Bob; Bob consents to routing through Carol; Carol consents to routing to Dave. Magician seals the outcome (hash proof). Dave can verify the seal independently.
+### Magician (`@magician-network/core`)
 
-### FlashyID (@flashyid/sdk)
-**Core responsibility:** OAuth 2.1, delegated authority, and credential verification.
+**Core responsibility:** trust routing and sealed introduction outcomes.
 
-- Issues OAuth credentials (Bearer tokens) after authentication
-- Mints delegation grants (e.g., "Alice grants Bob authority to issue transfers on her behalf")
-- Enforces attenuation: delegation can only narrow authority (Bob's grant ⊂ Alice's authority)
-- Verifies credential chains: proves who authorized what, in what order
-- Revokes credentials: immediate effect, no replays honored
+- `parseGraph` reads one owner's `magician-graph/1` document of trust/1 edges
+  and refuses anything malformed, including any spelling of expiry.
+- `findPaths(graph, intent)` routes from the owner, at most three hops; the
+  veil hides nodes past the consent frontier.
+- Every request opens `proposed`; `consentHop` accepts only the owner of the
+  edge being crossed; `markIntroduced` requires every hop; a decline renders
+  `unavailable`, indistinguishable from a path that never existed.
+- `sealOutcome` produces an introduction/1 record whose `digest` is sha256
+  over canonical JSON, implemented without `node:` so it verifies in a
+  browser; `appendOutcome` refuses replays.
 
-**Example:** Alice authenticates to FlashyID. Bob requests a delegation grant from Alice for "issue transfers up to $50 per day." FlashyID issues a grant token. Bob uses the grant to call Rails, which verifies the grant. Rails enforces Bob's constraint (Bob can only execute transfers up to the grant's limit).
+**Example:** Alice's intent wants `cap/gold-custody`. The router finds
+Alice → Bob → Carol → Dave. Alice consents to crossing her edge, Bob his,
+Carol hers. The outcome is sealed; anyone holding the record runs
+`verifyIntroduction` on it.
+
+### FlashyID (provider + `@flashyid/sdk`)
+
+**Core responsibility:** authenticated assertions and delegated authority
+that only narrows.
+
+- The **provider** (`oidc-provider` on Express, issuer `id.flashyid.com`) is
+  where a person signs in; it publishes OIDC discovery and a JWKS.
+- The **SDK** is not an OAuth client. `verifyAssertion` and `authorize` check
+  what the provider signs; `issueRoot` / `attenuate` / `verifyChain` /
+  `permits` are the grant kernel; `evaluateGrant` maps a decision to
+  `ALLOW | ESCALATE | DENY`.
+- `mintIssuerToken`, `mintConsentToken`, `mintGrantToken` and
+  `railGrantFromChain` mint the three token shapes the rail verifies.
+- Revocation is a `revokedJtis` set the relying party supplies at check time.
+
+**Example:** Alice issues a root grant to herself with `spend_max: 10000` and
+attenuates it to her agent at `5000`. The agent presents an assertion
+carrying the chain; the rail's relying-party check verifies it, and
+`railGrantFromChain` folds the chain onto a rail grant with `holderId = root`,
+`spenderId = leaf`, `capMinor = 5000`.
 
 ## Data Flow: A Complete Settlement
 
-Here's how all four systems work together when Alice sends $50 to Dave via Bob and Carol (assuming they already have trust edges):
+Alice pays Dave 50.00 FG through Bob and Carol.
 
 ```
-1. Authentication (FlashyID)
-   Alice → FlashyID: "Verify my identity"
-   FlashyID → Alice: OAuth token
-   
-2. Trust Routing (Magician)
-   Alice + Token → Magician: "Route introduction to Dave"
-   Magician → Alice: "Path exists: Alice → Bob → Carol → Dave"
-   
-3. Consent Collection (Magician)
-   Magician → Bob: "Alice requests intro to Dave. Approve?"
-   Bob → Magician: "Yes, sealed consent"
-   Magician → Carol: "Bob approved intro. Carol approves?"
-   Carol → Magician: "Yes, sealed consent"
-   
-4. Settlement Draft (Rails)
-   Alice + Token → Rails: "Draft transfer: Alice → Dave, $50 USD"
-   Rails → Alice: Draft ID #123 (Ledger not updated yet)
-   
-5. Approval (Alice)
-   Alice → Rails: "Approve draft #123 with my token"
-   Rails → Alice: Consent token (proof of approval)
-   
-6. Settlement Execute (Rails → Ledger)
-   Alice + Consent → Rails: "Execute draft #123"
-   Rails → Ledger: "Transfer $50 USD from Alice to Dave"
-   Ledger → Rails: "Settlement recorded, ID #456, Alice now has $50, Dave now has $100"
-   
-7. Audit Trail
-   Magician records: Sealed introduction (hash proof)
-   Rails records: Consent-gated transfer ($50 Alice → Dave)
-   Ledger records: Immutable transaction (append-only log)
+1. Route (Magician)
+   Alice's graph + intent → findPaths → Alice → Bob → Carol → Dave
+   Alice sees hop 1 (Bob) and domain hints for the rest: the veil
+
+2. Consent (Magician)
+   Alice consents to her edge; Bob to his; Carol to hers   (consentHop, owner only)
+   Any decline → requester reads `unavailable`, nothing more
+   All three → markIntroduced
+
+3. Seal (Magician)
+   sealOutcome(request, intent, { kind: 'deal', note }) → introduction/1 record with digest
+
+4. Draft (Rails)
+   rails.draftTransfer({ fromId, toId, amount: 50, source, idempotencyKey })
+   Pure — the Ledger is unchanged
+
+5. Consent (holder, signed by FlashyID in production)
+   approve(draft, holderId, approvedAt)  |  mintConsentToken(signer, { draftId, holderId, action })
+   Rails does not issue this; the holder gives it
+
+6. Execute (Rails → Ledger)
+   rails.execute(draft, consent) → postTransfer → appendAll([debit, credit])
+   Alice 50.00 FG, Dave 60.00 FG; consentedAt in each entry's metadata
+
+7. Records
+   Magician: the sealed record, appended to an outcome log
+   Ledger:   two chained entries, verifyChain valid, replay dedups
 ```
 
 ## Invariants (What Must Always Be True)
 
-1. **Ledger Invariant:** No holder's balance goes negative. Every transaction is immutable and idempotent.
-2. **Rails Invariant:** Value never leaves a holder without their explicit consent token. Grants can only narrow, never widen.
-3. **Magician Invariant:** An introduction is opaque to the requester if declined. A sealed outcome's hash is tamper-proof.
-4. **FlashyID Invariant:** Delegation is attenuation. A delegated authority can never exceed the delegator's authority.
+1. **Ledger:** no balance below zero without `allowNegative`; entries are never updated or deleted; a replayed key settles once.
+2. **Rails:** value leaves a holder only through `execute` with a consent bound to that draft, or `spendUnderGrant` within a grant checked before the write; grants attenuate, never widen.
+3. **Magician:** every request lands proposed; only an edge's owner consents; a decline is opaque to the requester; a sealed digest verifies or the record is refused.
+4. **FlashyID:** a chain only narrows, checked both when built and when verified; the leaf holder must be the assertion's subject; an untrusted root refuses before the mandate is read.
 
 ## Identity Model
 
-**Holders are opaque identities.** No names, no emails, no identifying information.
+Identity is opaque everywhere, and each system names it in its own terms:
 
-- Ledger calls them "holders" (account identifiers)
-- Rails calls them "account owners" 
-- Magician calls them "parties" in trust edges
-- FlashyID calls them "subjects" in credentials
+- **Ledger:** `identityId` — an opaque surrogate; `surrogateIdentity(value, salt)` derives one. Natural keys are refused.
+- **Rails:** `identityId` on commands, `holderId` / `spenderId` on consents and grants — the same ledger surrogate.
+- **Magician:** `person/<slug>` ids in one owner's graph; relationship data never leaves without a consent event.
+- **FlashyID:** `sub` on an assertion — a human, an org id, or an `agent:<org>/<name>` surrogate; `del[0].iss` is the accountable human.
 
-A holder's real-world identity is known only to the service that manages them—the service never publishes it, and Flashy systems never need it.
+Which ledger surrogate belongs to which `person/` slug is known only to the
+system that maps them, and the mapping never enters a record.
 
 ## Consent Model
 
-**Every value movement requires explicit, specific consent.**
+**Every value movement, and every crossing of a relationship, requires
+explicit, specific consent.**
 
-- Rails: "Alice consents to this exact draft (ID #123)"
-- Magician: "Bob consents to route Alice's introduction through Carol"
-- FlashyID: "Alice consents to delegate $50-per-day authority to Bob"
+- Rails: a `Consent` names one `draftId`, one `holderId`, one `action`.
+- Magician: a `HopConsent` is given by the owner of the edge being crossed, for one request.
+- FlashyID: a chain link is one holder handing a narrowed authority to one other holder, with `spend_max` and an approval bar.
 
-Consent is never blanket ("trust Bob forever") and never inferred ("Alice didn't decline, so yes"). Revocation is immediate.
+Consent is never blanket and never inferred. A grant is the one standing
+authorisation, and it is capped, scoped, expiring and revocable.
 
 ## Amount Semantics
 
-**All amounts are `Minor`: a branded integer type (not a float).**
+- **Ledger:** every amount is a `Minor` — a whole number of the asset's smallest unit. `fromDecimal(50, 2)` is `5000`; `toDecimal(5000, 2)` is `50`, a number for display. Arithmetic goes through `add` / `negate`.
+- **Rails:** commands take decimals (`amount: 50`); `toMinor(50)` is `5000` and `toGold(5000)` is `50` — presentation only, never fed back in. Grant caps are minor units.
+- **FlashyID:** `lim.spend_max` and `demand.amount` are minor units; the SDK moves no money.
+- **Magician:** not money-aware. Its numbers are trust strengths in `[0, 1]`, each carrying a register.
 
-- Ledger: All amounts are Minor (whole units of the asset's smallest denomination)
-- Rails: All amounts are Minor
-- Magician: Not money-aware (trust graph only)
-- FlashyID: Not money-aware (credentials only)
-
-To convert: `toMinor("50.00")` = 5000 (50 dollars in cents-equivalent). `toGold(5000)` = "50.00". Never mix Minor with JavaScript arithmetic; use Ledger's `add()` and `negate()`.
+There is no `toMinor("50.00")` string form anywhere; every conversion takes
+and returns numbers.
 
 ## Error Model
 
-Each system has its own error types:
-
-- **Ledger:** `LedgerError` (insufficient balance, identity mismatch, duplicate replay)
-- **Rails:** `RailsError` (invalid draft, missing consent, revoked grant)
-- **Magician:** `MagicianError` (no path found, consent refused, seal verification failed)
-- **FlashyID:** `CredentialError` (invalid grant, expired credential, attenuation violated)
-
-A calling system catches errors from subsystems and may translate them to its own error type. Errors propagate upward with original codes intact for auditing.
+- **Ledger:** `LedgerError` with codes `INSUFFICIENT_BALANCE`, `ZERO_AMOUNT`, `MISSING_IDEMPOTENCY_KEY`, `NATURAL_KEY_IDENTITY`, `ASSET_NOT_TRANSFERABLE`, `INSUFFICIENT_FOR_CONSUMPTION`, `DUPLICATE_ASSET_IN_COMMAND`. A replay is not an error.
+- **Rails:** `RailsError(code, httpStatus, message)` — `CONSENT_REQUIRED`, `CONSENT_MISMATCH`, `GRANT_*`, `INVALID_AMOUNT`, `MISSING_SOURCE`, `MISSING_IDEMPOTENCY_KEY`, `STORE_NOT_TRANSACTIONAL`. Ledger errors pass through unwrapped.
+- **Magician:** no error class. Parsers and the consent machine throw a plain `Error` whose message starts with the refusing format (`trust/1:`, `graph:`, `intent:`, `consent:`, `introduction/1:`); `findPaths` returns `[]` rather than throwing.
+- **FlashyID:** refusals are **values** — `null` from `verifyAssertion` / `authorize` for an inauthentic token, and `Refusal { ok: false, code }` from the kernel (`chain_widened`, `broken_chain`, `expired`, `revoked`, `out_of_mandate`, `approval_required`, `untrusted_root`, `empty_chain`, `scope_unmapped`).
 
 ## Time Model
 
-- **Ledger:** Every transaction has an immutable timestamp (at settlement time)
-- **Rails:** Drafts are timebound; approval tokens expire after a short window (default 5 minutes)
-- **Magician:** Trust edges can be stale (>365 days unrenewed); stale edges contribute at reduced tier
-- **FlashyID:** Credentials have expiry; revocation takes effect immediately
+- **Ledger:** `occurredAt` is always an argument; the domain reads no clock.
+- **Rails:** `RailsService` takes an injectable `clock`; an in-process consent has no expiry; a grant expires at its `expiresAt`; a flashyID-minted consent token expires in 120 s by default, issuer and grant tokens in 300 s.
+- **Magician:** `renewed` is the decay clock; fresh ≤ 180 days, stale > 365, and a stale edge contributes at no better than `estimated`. Sealed records never decay.
+- **FlashyID:** `nowSec` is an argument to every check; a chain's effective expiry is the minimum across its links; a child's expiry is capped at its parent's.
 
 ## Next Steps
 
-- [Ledger API](../api/ledger-api.md) — The settlement engine's exports, measured against source
-- [Rails API](../api/rails-api.md) — The approval gate in detail
-- [Magician API](../api/magician-api.md) — Trust graphs, the router and sealing
-- [FlashyID API](../api/flashyid-api.md) — Assertions, the grant kernel and delegation
-- [Combined Workflow](../guides/combined-workflow.md) — The four systems in one flow
-- [Deployment Patterns](../deployment/patterns.md) — How the systems are deployed together
+- [Ledger API](../api/ledger-api.md) · [Rails API](../api/rails-api.md) · [Magician API](../api/magician-api.md) · [FlashyID API](../api/flashyid-api.md) — every export, measured against source
+- [Combined Workflow](../guides/combined-workflow.md) — the flow above as running code
+- [Deployment Patterns](../deployment/patterns.md) — how the systems are deployed together
 
 The per-system architecture pages (`ledger-design.md`, `rails-consent.md`,
 `magician-routing.md`, `flashyid-identity.md`, `integration-patterns.md`) are
