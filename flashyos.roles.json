@@ -1,0 +1,95 @@
+{
+  "x-generated": "estate-charter/1; 2026-09-29; every role is one standing job, and five roles are five agents",
+  "aao": "0.1",
+  "name": "Flashy Docs",
+  "slug": "flashy-docs",
+  "description": "Flashy Docs — a library on the FlashyOS mesh — an installable package with a hand-enumerated API and a release ledger. AAO expands to Agentic Autonomous Organization.",
+  "accountableTo": "michael@gda.capital",
+  "escalation": "maintainer",
+  "repositories": [
+    {
+      "name": "flashy-docs",
+      "url": "github.com/FlashyLabs/flashy-docs",
+      "default": true,
+      "holds": [
+        "library",
+        "api"
+      ]
+    }
+  ],
+  "roles": [
+    {
+      "name": "maintainer",
+      "family": "engineering",
+      "purpose": "Owns the library’s correctness and its public API. Removing an export is a major version; the API surface is enumerated by hand, never a generated snapshot.",
+      "measure": "Changes carrying a test, as a share of merges",
+      "capabilities": [
+        "merge-changes",
+        "define-api"
+      ],
+      "humanApprovalAtOrAbove": "HIGH",
+      "x-capability": [
+        "content-exchange"
+      ],
+      "worksIn": [
+        "flashy-docs"
+      ]
+    },
+    {
+      "name": "review",
+      "family": "governance",
+      "purpose": "Reviews a change before it lands, because a signature change breaks every consumer that embeds this package.",
+      "measure": "Merges carrying a review, as a share of merges",
+      "capabilities": [
+        "review-changes",
+        "approve-merge"
+      ],
+      "humanApprovalAtOrAbove": "HIGH",
+      "worksIn": [
+        "flashy-docs"
+      ]
+    },
+    {
+      "name": "release",
+      "family": "operations",
+      "purpose": "Versions and publishes to the registry, proving the package importable both ways before it ships and recording the release in the ledger.",
+      "measure": "Releases with a changelog entry, as a share of tags",
+      "capabilities": [
+        "tag-version",
+        "publish-package"
+      ],
+      "humanApprovalAtOrAbove": "MEDIUM",
+      "worksIn": [
+        "flashy-docs"
+      ]
+    },
+    {
+      "name": "conformance",
+      "family": "engineering",
+      "purpose": "Runs the tests, the typecheck and the lint, and holds coverage to the threshold CI fails on.",
+      "measure": "Checks passing, as a share of runs",
+      "capabilities": [
+        "run-tests",
+        "run-lint"
+      ],
+      "humanApprovalAtOrAbove": "LOW",
+      "worksIn": [
+        "flashy-docs"
+      ]
+    },
+    {
+      "name": "adoption",
+      "family": "growth",
+      "purpose": "Helps a consumer integrate and records real usage, so a claim of adoption is a number somebody measured rather than assumed.",
+      "measure": "Consumers onboarded, as a share of enquiries",
+      "capabilities": [
+        "guide-consumer",
+        "record-usage"
+      ],
+      "humanApprovalAtOrAbove": "LOW",
+      "worksIn": [
+        "flashy-docs"
+      ]
+    }
+  ]
+}
